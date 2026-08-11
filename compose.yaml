@@ -1,0 +1,9 @@
+services:
+  api:
+    build:
+      context: .
+    image: devops-lab-api:0.3
+    container_name: devops-lab-api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

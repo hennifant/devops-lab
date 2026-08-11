@@ -1,6 +1,6 @@
-cat > .gitignore <<'EOF'
 .venv/
 __pycache__/
 .pytest_cache/
 *.py[cod]
-EOF
+*.egg-info/
+.env
