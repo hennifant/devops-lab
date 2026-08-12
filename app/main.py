@@ -1,3 +1,6 @@
+import os
+
+import psycopg
 from fastapi import FastAPI
 
 app = FastAPI(title="DevOps Lab API")
@@ -11,3 +14,19 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+
+@app.get("/db")
+def database():
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+
+    return {
+        "database": "connected",
+        "result": result[0],
+    }
+
