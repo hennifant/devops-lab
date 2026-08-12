@@ -15,6 +15,12 @@ def root():
 def health():
     return {"status": "healthy"}
 
+@app.get("/info")
+def info():
+    return {
+        "service": "devops-lab-api",
+        "version": "0.1",
+    }
 
 @app.get("/db")
 def database():
