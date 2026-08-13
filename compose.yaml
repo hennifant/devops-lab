@@ -1,6 +1,6 @@
 services:
   api:
-    image: devops-lab-api:0.4
+    image: ghcr.io/hennifant/devops-lab-api:${IMAGE_TAG:-latest}
     container_name: devops-lab-api
     ports:
       - "8000:8000"
