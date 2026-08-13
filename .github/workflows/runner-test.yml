@@ -1,0 +1,18 @@
+name: Runner Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-runner:
+    runs-on: [self-hosted, Linux, ARM64]
+
+    steps:
+      - name: Show system
+        run: |
+          uname -a
+          echo "Runner: $RUNNER_NAME"
+          echo "Architecture: $RUNNER_ARCH"
+
+      - name: Check Docker
+        run: docker version
