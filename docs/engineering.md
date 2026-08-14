@@ -19,7 +19,9 @@ GitHub Actions (ci.yml, ubuntu-latest)
    │
    ▼  workflow_run: CI completed & success
 GitHub Actions (deploy.yml, self-hosted arm64 runner on the M2)
-   └── docker compose pull api && docker compose up -d api
+   ├── rsync workspace → ~/deploy/devops-lab   (never deploys from the workspace itself)
+   ├── write .env from repository secrets
+   └── docker compose pull && docker compose up -d
 ```
 
 Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
@@ -45,6 +47,8 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 | [tests/](tests/) | pytest suite against the app via `TestClient` |
 | [Dockerfile](Dockerfile) | python:3.14-slim, non-root `appuser`, HEALTHCHECK |
 | [compose.yaml](compose.yaml) | api, db, prometheus, alertmanager, grafana |
+| [compose.dev.yaml](compose.dev.yaml) | dev overlay: builds `api` locally instead of pulling |
+| [README.md](README.md) | human-facing overview with mermaid diagrams |
 | [monitoring/](monitoring/) | Prometheus config + rules, Alertmanager config, Grafana provisioning |
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | test → build → push to GHCR |
 | [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | deploy on the self-hosted runner |
@@ -56,39 +60,46 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 # tests (needs .venv active or use .venv/bin/python)
 .venv/bin/python -m pytest
 
-# local stack
-docker compose up -d
+# dev stack — always use the overlay, it builds api from the working tree
+docker compose -f compose.yaml -f compose.dev.yaml up -d
 docker compose ps
 docker compose logs -f api
-
-# build locally for this machine's arch
-docker build -t devops-lab-api:dev .
 ```
+
+Plain `docker compose up -d` pulls `api` from GHCR instead of building it and fails unless
+Docker is logged in to the registry. It is also the wrong thing to test against: the pulled
+image contains the last CI build, not the working tree.
 
 ## Critical operational rules
 
 ### Compose project identity
 
-There are **two checkouts of this repo on the M2** that both run `docker compose`:
+Two Compose projects run on this machine and must never merge:
 
-- `/home/hennifant/Development/devops-lab` — the dev checkout (manual `docker compose up`)
-- `/home/hennifant/Development/actions-runner/_work/devops-lab/devops-lab` — the runner checkout (deploy workflow)
+| Project | Directory | Image source | Ports |
+| --- | --- | --- | --- |
+| `devops-lab` | `~/deploy/devops-lab` | GHCR, SHA tag | 8000, 9090, 9093, 3000 |
+| `devops-lab-dev` | this checkout | built from working tree | 18000, 19090, 19093, 13000 |
 
-Both resolve to the Compose project name `devops-lab` and both use explicit
-`container_name:` values. They therefore **share and overwrite each other's containers**
-while disagreeing about config, env, and bind-mount paths. This has already produced a
-live container with `DATABASE_URL=postgresql://:@db:5432/` because the runner checkout has
-no `.env`.
+They were previously one project by accident: Compose derives the project name from the
+directory basename when nothing else is set, and both directories are called `devops-lab`.
+The two stacks shared containers, volumes and network while disagreeing about config and
+env — which is how a live container ended up with `DATABASE_URL=postgresql://:@db:5432/`.
 
-Rules until this is properly fixed (Phase 1):
+What keeps them apart, and must not be undone:
 
-- Never assume a running container came from the checkout you are looking at. Verify:
-  `docker inspect <name> --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'`
-- The deploy workflow may only touch `api`. Never `docker compose up -d` without a service
-  name from the runner — the runner checkout has no `monitoring/`, and Docker would create
-  empty directories where the bind mounts point.
-- Any change to service names, `container_name`, volumes, or project naming must account
-  for both checkouts.
+- `name: devops-lab` in [compose.yaml](compose.yaml), overridden by `COMPOSE_PROJECT_NAME`
+  in the local `.env`. Precedence: `-p` > `COMPOSE_PROJECT_NAME` > `name:` > directory basename.
+- **No `container_name:` anywhere.** It is a global, Docker-wide name that bypasses the
+  project prefix entirely, so two projects would still collide on it. Compose-generated
+  names (`devops-lab-api-1`) are correct.
+- Services address each other by *service* name (`api:8000`, `db:5432`, `prometheus:9090`).
+  Those are network aliases and are independent of container names.
+- Host ports are variables so both stacks can bind at once.
+
+The deploy never runs from the runner workspace. `actions/checkout` cleans it on every run;
+replacing a bind-mounted file gives it a new inode while the running container keeps the
+deleted one, so a config change would silently never take effect.
 
 ### Secrets
 
@@ -100,9 +111,12 @@ Rules until this is properly fixed (Phase 1):
 
 ### Security constraints
 
-- **Prometheus (9090), Alertmanager (9093) and Grafana (3000) are currently bound to all
-  interfaces with no authentication** on Prometheus/Alertmanager. Anyone on the LAN can read
-  metrics and silence alerts. Phase 1 binds them to `127.0.0.1`.
+- Prometheus, Alertmanager and Grafana bind to `127.0.0.1` only. The loopback address is
+  hardcoded in [compose.yaml](compose.yaml), not a variable — Prometheus and Alertmanager
+  have no authentication whatsoever, so exposing them would let anyone on the LAN read all
+  metrics and silence alerts through the Alertmanager API. Only `api` is published on the LAN.
+- Grafana still runs on the default `admin`/`admin` credentials. Loopback binding is what
+  currently protects it; that is not a substitute for setting a password.
 - **Never move a `pull_request`-triggered job onto the self-hosted runner.** Fork PRs would
   execute arbitrary code on the M2 with Docker socket access. The `test` job stays on
   `ubuntu-latest`.
@@ -132,21 +146,19 @@ Rules until this is properly fixed (Phase 1):
 Working end to end: push → test → multi-arch build → GHCR → self-hosted deploy with SHA tag,
 Prometheus scraping the API, Grafana with a provisioned Prometheus datasource.
 
-Known gaps, in priority order — this is the Phase 1 backlog:
+Done in Phase 1: the two Compose projects are isolated, `monitoring/` is tracked, the deploy
+runs from a stable directory with `.env` written from repository secrets, Prometheus has a
+named volume, and the monitoring ports are on loopback.
 
-1. Compose split-brain between the two checkouts (see above); `DATABASE_URL` is empty in the
-   deployed container as a direct consequence.
-2. `monitoring/` is untracked and therefore absent from the runner checkout.
-3. Alertmanager has a receiver with no destination — alerts fire into nothing.
-4. Prometheus has no *named* volume. It falls back to an anonymous volume from the image's
-   `VOLUME /prometheus`, so history survives a restart but is untracked, is orphaned by
-   `docker compose down`, and cannot be backed up alongside `postgres-data`/`grafana-data`.
-5. Dependencies in [requirements.txt](requirements.txt) are unpinned.
-6. No `.dockerignore`; the 75 MB `.venv` is sent as build context on every build.
-7. No `concurrency:` group — two rapid pushes race on the same runner.
-8. Deploy does not wait for health, run a smoke test, or roll back on failure.
-9. Monitoring ports exposed on all interfaces; Grafana admin credentials at default.
-10. The database is provisioned but unused — `psycopg` is installed and never imported.
+Remaining Phase 1 backlog, in priority order:
+
+1. Alertmanager has a receiver with no destination — alerts fire into nothing.
+2. Dependencies in [requirements.txt](requirements.txt) are unpinned.
+3. No `.dockerignore`; the 75 MB `.venv` is sent as build context on every build.
+4. No `concurrency:` group — two rapid pushes race on the same runner.
+5. Deploy does not wait for health, run a smoke test, or roll back on failure.
+6. Grafana admin credentials at default.
+7. The database is provisioned but unused — `psycopg` is installed and never imported.
 
 ## Roadmap
 
