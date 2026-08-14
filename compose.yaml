@@ -1,9 +1,13 @@
+# Project name is set explicitly so it no longer depends on the directory basename.
+# The deploy checkout and the dev checkout are both named "devops-lab", which made
+# Compose treat them as one project. Override locally via COMPOSE_PROJECT_NAME in .env.
+name: devops-lab
+
 services:
   api:
     image: ghcr.io/hennifant/devops-lab-api:${IMAGE_TAG:-latest}
-    container_name: devops-lab-api
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
@@ -18,7 +22,6 @@ services:
 
   db:
     image: postgres:18
-    container_name: devops-lab-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -31,5 +34,42 @@ services:
       timeout: 5s
       retries: 5
 
+  prometheus:
+    image: prom/prometheus:latest
+    # Prometheus and Alertmanager have no authentication, so they stay on loopback.
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    environment:
+      # Compose does not hash bind mount contents, so a config-only change would not
+      # recreate the container. The deploy writes a checksum here to force it.
+      MONITORING_CONFIG_HASH: ${MONITORING_CONFIG_HASH:-dev}
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    environment:
+      MONITORING_CONFIG_HASH: ${MONITORING_CONFIG_HASH:-dev}
+    volumes:
+      # Single file, not the directory: the notification secret will live in
+      # monitoring/alertmanager/.env and must not be mounted into the container.
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+
 volumes:
   postgres-data:
+  prometheus-data:
+  grafana-data:
