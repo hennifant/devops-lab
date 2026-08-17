@@ -1,0 +1,9 @@
+# Allowlist, not denylist: deny everything, then permit exactly what the Dockerfile
+# copies. A denylist has to anticipate every future secret file in advance; this
+# cannot leak one, even if someone later adds a COPY . . to the Dockerfile.
+*
+!requirements.txt
+!app
+
+# app/ is re-included wholesale, so strip build artefacts back out.
+app/**/__pycache__
