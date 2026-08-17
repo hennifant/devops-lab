@@ -7,6 +7,14 @@ on:
     types:
       - completed
 
+# A single global lane — no github.ref in the group name. Deploys must serialise, so a
+# running deploy is never cancelled. GitHub keeps at most one run queued per group: a
+# third arrival cancels the queued one and takes its place, so the newest commit wins
+# instead of every intermediate one being replayed onto the host.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     if: >
