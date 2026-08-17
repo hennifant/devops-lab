@@ -1,0 +1,11 @@
+groups:
+  - name: devops-lab
+    rules:
+      - alert: APIDown
+        expr: up{job="devops-lab-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DevOps Lab API is down"
+          description: "The DevOps Lab API has been unavailable for more than 1 minute."

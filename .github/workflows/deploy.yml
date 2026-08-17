@@ -22,6 +22,12 @@ jobs:
       contents: read
       packages: read
 
+    env:
+      # The stack does not run from the runner workspace. actions/checkout cleans that
+      # directory on every run, which replaces bind-mounted files and leaves running
+      # containers pointing at deleted inodes.
+      DEPLOY_DIR: /home/hennifant/deploy/devops-lab
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,13 +41,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy API
-        env:
-          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+      - name: Sync deployment directory
         run: |
-          docker compose pull api
-          docker compose up -d api
+          mkdir -p "$DEPLOY_DIR"
+          rsync -a --delete --exclude '.git' --exclude '.env' ./ "$DEPLOY_DIR/"
+
+      - name: Write deployment environment
+        run: |
+          umask 077
+          hash=$(find monitoring -type f -exec sha256sum {} + | sort | sha256sum | cut -c1-12)
+          cat > "$DEPLOY_DIR/.env" <<EOF
+          IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
+          MONITORING_CONFIG_HASH=$hash
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          EOF
+
+      - name: Deploy stack
+        run: |
+          cd "$DEPLOY_DIR"
+          docker compose pull
+          docker compose up -d --remove-orphans
 
       - name: Show deployment status
         run: |
+          cd "$DEPLOY_DIR"
           docker compose ps
