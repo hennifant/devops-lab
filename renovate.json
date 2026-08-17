@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Europe/Berlin",
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+
+  "pip_requirements": {
+    "managerFilePatterns": ["/^requirements(-dev)?\\.in$/"]
+  },
+  "pip-compile": {
+    "managerFilePatterns": ["/^requirements(-dev)?\\.txt$/"]
+  },
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+
+  "packageRules": [
+    {
+      "description": "Keep the base image digest current, so pinning it does not mean never patching it",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true
+    },
+    {
+      "description": "One pull request for all workflow action bumps instead of one per action",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "One pull request for the Python dependency set",
+      "matchManagers": ["pip_requirements", "pip-compile"],
+      "groupName": "python dependencies"
+    }
+  ]
+}

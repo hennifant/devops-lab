@@ -1,0 +1,8 @@
+# Direct runtime dependencies. Intent lives here; requirements.txt is the compiled
+# lock and must never be edited by hand.
+#
+#   uv pip compile --universal requirements.in -o requirements.txt
+fastapi
+uvicorn
+psycopg[binary]
+prometheus-fastapi-instrumentator

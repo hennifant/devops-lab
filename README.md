@@ -104,6 +104,24 @@ The API is then on <http://localhost:18000>, Grafana on <http://localhost:13000>
 Plain `docker compose up -d` without the overlay pulls the API image from GHCR instead of
 building it, and will fail unless Docker is logged in to the registry.
 
+## Dependencies
+
+`requirements.txt` and `requirements-dev.txt` are compiled, not written. Edit the `.in`
+file and recompile:
+
+```bash
+uv pip compile --universal requirements.in     -o requirements.txt
+uv pip compile --universal requirements-dev.in -o requirements-dev.txt
+```
+
+The base image is pinned to a digest and the Python packages are fully pinned, so a commit
+SHA determines the image. Renovate keeps both current and opens grouped pull requests.
+
+## Decisions
+
+Structural decisions are recorded in [docs/adr/](docs/adr/) — what was decided, what it
+cost, and how the underlying mechanism works.
+
 ## Deployment
 
 Pushing to `main` runs CI; a successful CI run triggers the deploy workflow on the
