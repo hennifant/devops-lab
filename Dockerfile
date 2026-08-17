@@ -1,4 +1,6 @@
-FROM python:3.14-slim
+# Pinned to the multi-arch index digest so a given commit always builds on the same
+# base layer. Renovate keeps the digest current; do not bump it by hand.
+FROM python:3.14-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4
 
 WORKDIR /app
 
