@@ -50,8 +50,13 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 | [compose.dev.yaml](compose.dev.yaml) | dev overlay: builds `api` locally instead of pulling |
 | [README.md](README.md) | human-facing overview with mermaid diagrams |
 | [monitoring/](monitoring/) | Prometheus config + rules, Alertmanager config, Grafana provisioning |
+| [docs/adr/](docs/adr/) | architecture decision records — read these before changing anything structural |
+| [requirements.in](requirements.in) | direct dependencies; `requirements.txt` is compiled from it |
+| [.dockerignore](.dockerignore) | allowlist — denies everything, permits what the Dockerfile copies |
+| [renovate.json](renovate.json) | dependency and base-image update rules |
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | test → build → push to GHCR |
 | [.github/workflows/deploy.yml](.github/workflows/deploy.yml) | deploy on the self-hosted runner |
+| [.github/workflows/renovate.yml](.github/workflows/renovate.yml) | self-hosted Renovate, weekly + `workflow_dispatch` |
 | [.github/workflows/runner-test.yml](.github/workflows/runner-test.yml) | manual runner smoke test (`workflow_dispatch`) |
 
 ## Commands
@@ -64,6 +69,10 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 docker compose -f compose.yaml -f compose.dev.yaml up -d
 docker compose ps
 docker compose logs -f api
+
+# dependencies: edit the .in file, then recompile. Never edit a .txt by hand.
+uv pip compile --universal requirements.in     -o requirements.txt
+uv pip compile --universal requirements-dev.in -o requirements-dev.txt
 ```
 
 Plain `docker compose up -d` pulls `api` from GHCR instead of building it and fails unless
@@ -126,9 +135,14 @@ deleted one, so a config change would silently never take effect.
 
 - Deploys always use the commit SHA tag, never `:latest`. `IMAGE_TAG` in Compose defaults to
   `latest` only for local convenience — do not rely on it for anything deployed.
-- The goal is: *given a commit SHA, the image is reproducible*. Until dependencies are pinned
-  (Phase 1) this guarantee does not actually hold. Do not describe the setup as reproducible
-  before then.
+- The goal is: *given a commit SHA, the image is reproducible*. Three things carry that:
+  the pinned base image digest in [Dockerfile](Dockerfile), the compiled
+  [requirements.txt](requirements.txt), and the SHA image tag. Breaking any one of them
+  breaks the guarantee.
+- `requirements.txt` and `requirements-dev.txt` are **generated**. Edit the `.in` files and
+  recompile with `uv pip compile --universal`. Renovate replays that exact command, so the
+  header it writes must not be suppressed.
+- The base image digest is maintained by Renovate. Do not bump it by hand.
 
 ## Conventions
 
@@ -140,6 +154,9 @@ deleted one, so a config change would silently never take effect.
 - **Language**: English for code, comments, commits, and docs.
 - Prefer changes that are visible in `git` over click-ops. A Grafana dashboard built in the
   UI and not exported to `monitoring/grafana/provisioning/` does not count as done.
+- **Structural decisions get an ADR** in [docs/adr/](docs/adr/), using
+  [the template](docs/adr/0000-template.md). Records are immutable — supersede, never edit.
+  The `Background` section is not optional: it is why this repository exists.
 
 ## Current state
 
@@ -148,17 +165,16 @@ Prometheus scraping the API, Grafana with a provisioned Prometheus datasource.
 
 Done in Phase 1: the two Compose projects are isolated, `monitoring/` is tracked, the deploy
 runs from a stable directory with `.env` written from repository secrets, Prometheus has a
-named volume, and the monitoring ports are on loopback.
+named volume, the monitoring ports are on loopback, dependencies and the base image digest
+are pinned, the build context is an allowlist, both workflows have concurrency groups, and
+Renovate maintains the pins.
 
 Remaining Phase 1 backlog, in priority order:
 
 1. Alertmanager has a receiver with no destination — alerts fire into nothing.
-2. Dependencies in [requirements.txt](requirements.txt) are unpinned.
-3. No `.dockerignore`; the 75 MB `.venv` is sent as build context on every build.
-4. No `concurrency:` group — two rapid pushes race on the same runner.
-5. Deploy does not wait for health, run a smoke test, or roll back on failure.
-6. Grafana admin credentials at default.
-7. The database is provisioned but unused — `psycopg` is installed and never imported.
+2. Deploy does not wait for health, run a smoke test, or roll back on failure.
+3. Grafana admin credentials at default.
+4. The database is provisioned but unused — `psycopg` is installed and never imported.
 
 ## Roadmap
 
