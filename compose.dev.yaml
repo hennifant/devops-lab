@@ -1,0 +1,13 @@
+# Local development overlay. Must be passed explicitly:
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d
+#
+# It deliberately lives outside compose.yaml. With a build: section in the base file
+# the deploy runner would silently build the image itself whenever a pull failed,
+# and the deployed container would no longer be the artifact CI verified.
+services:
+  api:
+    image: devops-lab-api:dev
+    build: .
+    # Always build from the working tree instead of consulting GHCR.
+    pull_policy: build
