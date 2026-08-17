@@ -1,0 +1,6 @@
+# Development dependencies, on top of the runtime set.
+#
+#   uv pip compile --universal requirements-dev.in -o requirements-dev.txt
+-r requirements.in
+pytest
+httpx2
