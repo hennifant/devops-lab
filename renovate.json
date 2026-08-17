@@ -2,8 +2,14 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "timezone": "Europe/Berlin",
-  "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
+
+  "description": [
+    "No schedule is set here on purpose. Renovate's schedule controls when it is allowed",
+    "to create branches, not when it runs. Since this is self-hosted, the cron in",
+    ".github/workflows/renovate.yml already decides that, and a second gate only blocks",
+    "manual workflow_dispatch runs."
+  ],
 
   "pip_requirements": {
     "managerFilePatterns": ["/^requirements(-dev)?\\.in$/"]
@@ -13,8 +19,7 @@
   },
 
   "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": ["before 6am on the first day of the month"]
+    "enabled": true
   },
 
   "packageRules": [
