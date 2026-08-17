@@ -71,8 +71,10 @@ docker compose ps
 docker compose logs -f api
 
 # dependencies: edit the .in file, then recompile. Never edit a .txt by hand.
-uv pip compile --universal requirements.in     -o requirements.txt
-uv pip compile --universal requirements-dev.in -o requirements-dev.txt
+# --output-file, never -o: Renovate replays the command from the header and its parser
+# rejects the short form with "Option -o not supported (yet)".
+uv pip compile --universal requirements.in     --output-file=requirements.txt
+uv pip compile --universal requirements-dev.in --output-file=requirements-dev.txt
 ```
 
 Plain `docker compose up -d` pulls `api` from GHCR instead of building it and fails unless

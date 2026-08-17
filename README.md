@@ -110,9 +110,12 @@ building it, and will fail unless Docker is logged in to the registry.
 file and recompile:
 
 ```bash
-uv pip compile --universal requirements.in     -o requirements.txt
-uv pip compile --universal requirements-dev.in -o requirements-dev.txt
+uv pip compile --universal requirements.in     --output-file=requirements.txt
+uv pip compile --universal requirements-dev.in --output-file=requirements-dev.txt
 ```
+
+Use `--output-file`, not `-o`. Renovate replays the command recorded in the file header
+and its parser rejects the short form.
 
 The base image is pinned to a digest and the Python packages are fully pinned, so a commit
 SHA determines the image. Renovate keeps both current and opens grouped pull requests.

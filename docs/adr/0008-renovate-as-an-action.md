@@ -92,6 +92,19 @@ suppressed with `--no-header`. The `.in` files are handled by the separate
 `pip_requirements` manager; both are pointed at explicit patterns here so they cannot
 both claim the same file.
 
+**`schedule` is not "when Renovate runs".** It restricts when Renovate may *create
+branches*, independently of when the process starts. Self-hosted, the cron in
+`.github/workflows/renovate.yml` already decides when it runs, so a `schedule` in
+`renovate.json` is a second gate that silently blocks manual `workflow_dispatch` runs:
+
+```
+Skipping branch creation as not within schedule (branch=renovate/major-github-actions)
+```
+
+The configuration therefore sets no schedule at all. The same trap applies to
+`lockFileMaintenance.schedule` — a monthly window would almost never coincide with a
+weekly cron, and the maintenance would simply never happen.
+
 **Token permissions.** The fine-grained PAT for `RENOVATE_TOKEN` needs Contents and Pull
 requests (write, to push branches and open pull requests), Issues (write, for the
 dependency dashboard), and Workflows (write, or it cannot modify anything under
@@ -101,6 +114,26 @@ dependency dashboard), and Workflows (write, or it cannot modify anything under
 `github-actions` manager would rewrite `actions/checkout@v4` to a commit SHA, which
 defends against a tag being re-pointed at malicious code. It is a real hardening step and
 deliberately deferred — it belongs with the Phase 4 supply chain work.
+
+## Known limitations
+
+*Observed on the first run, 2026-08-17.*
+
+Docker Hub refuses anonymous tag enumeration beyond roughly page 10:
+
+```
+GET https://hub.docker.com/v2/repositories/library/python/tags?…&page=11  → 403
+hostRules: no authentication for hub.docker.com
+```
+
+Renovate can therefore miss newly published *tags* for `python` and `postgres` — a future
+`3.15` might go unnoticed. Digest lookups for an already-pinned tag go through
+`index.docker.io` and appear unaffected, but that has not yet been confirmed by a run in
+which the digest actually moved.
+
+The fix would be a Docker Hub account plus a token, supplied through `hostRules`. That is
+another credential to manage for a narrow benefit, so it is deliberately not done. Revisit
+if a base image upgrade is ever missed.
 
 - [Renovate pip-compile manager](https://docs.renovatebot.com/modules/manager/pip-compile/)
 - [renovatebot/github-action](https://github.com/renovatebot/github-action)
