@@ -20,3 +20,4 @@ Start from [0000-template.md](0000-template.md).
 | [0006](0006-compiled-requirements-with-uv.md) | Compiled requirements with uv | 2026-08-17 |
 | [0007](0007-concurrency-groups.md) | Concurrency groups for CI and deploy | 2026-08-17 |
 | [0008](0008-renovate-as-an-action.md) | Renovate as a self-hosted Action, and a pinned base image digest | 2026-08-17 |
+| [0009](0009-restart-policy-and-pinned-monitoring-images.md) | Restart policy, and pinned monitoring images | 2026-08-19 |

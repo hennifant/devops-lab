@@ -107,6 +107,8 @@ What keeps them apart, and must not be undone:
 - Services address each other by *service* name (`api:8000`, `db:5432`, `prometheus:9090`).
   Those are network aliases and are independent of container names.
 - Host ports are variables so both stacks can bind at once.
+- `restart:` is a variable too. The deployment defaults to `unless-stopped` so it survives
+  a reboot; the dev checkout sets `RESTART_POLICY=no`. See [ADR 0009](docs/adr/0009-restart-policy-and-pinned-monitoring-images.md).
 
 The deploy never runs from the runner workspace. `actions/checkout` cleans it on every run;
 replacing a bind-mounted file gives it a new inode while the running container keeps the
@@ -145,6 +147,8 @@ deleted one, so a config change would silently never take effect.
   recompile with `uv pip compile --universal`. Renovate replays that exact command, so the
   header it writes must not be suppressed.
 - The base image digest is maintained by Renovate. Do not bump it by hand.
+- Every image is pinned, including the monitoring stack. No `:latest` anywhere that gets
+  deployed — `docker compose pull` re-resolves a floating tag on every run.
 
 ## Conventions
 
