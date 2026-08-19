@@ -125,6 +125,9 @@ SHA determines the image. Renovate keeps both current and opens grouped pull req
 Structural decisions are recorded in [docs/adr/](docs/adr/) — what was decided, what it
 cost, and how the underlying mechanism works.
 
+[docs/engineering.md](docs/engineering.md) is the working reference: architecture, layout,
+commands, the operational rules that must not be undone, and the roadmap.
+
 ## Deployment
 
 Pushing to `main` runs CI; a successful CI run triggers the deploy workflow on the

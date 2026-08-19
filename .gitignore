@@ -4,3 +4,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .env
+# Local agent context. docs/engineering.md is the tracked source; CLAUDE.md just imports it.
+CLAUDE.md
+.claude/
