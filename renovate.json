@@ -1,41 +1,73 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended"
+  ],
   "timezone": "Europe/Berlin",
-  "labels": ["dependencies"],
-
+  "labels": [
+    "dependencies"
+  ],
   "description": [
     "No schedule is set here on purpose. Renovate's schedule controls when it is allowed",
     "to create branches, not when it runs. Since this is self-hosted, the cron in",
     ".github/workflows/renovate.yml already decides that, and a second gate only blocks",
     "manual workflow_dispatch runs."
   ],
-
   "pip_requirements": {
-    "managerFilePatterns": ["/^requirements(-dev)?\\.in$/"]
+    "managerFilePatterns": [
+      "/^requirements(-dev)?\\.in$/"
+    ]
   },
   "pip-compile": {
-    "managerFilePatterns": ["/^requirements(-dev)?\\.txt$/"]
+    "managerFilePatterns": [
+      "/^requirements(-dev)?\\.txt$/"
+    ]
   },
-
   "lockFileMaintenance": {
     "enabled": true
   },
-
   "packageRules": [
     {
+      "description": "pip_requirements also claims the .txt files by default \u2014 managerFilePatterns adds to the built-in patterns, it does not replace them. There it sees a compiled lock as a list of plain pins and will happily bump a transitive one past what its parent allows.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "requirements.txt",
+        "requirements-dev.txt"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Transitive pins are dictated by their parent. Refresh them through lockFileMaintenance, never individually.",
+      "matchManagers": [
+        "pip-compile"
+      ],
+      "matchDepTypes": [
+        "indirect"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Keep the base image digest current, so pinning it does not mean never patching it",
-      "matchManagers": ["dockerfile"],
+      "matchManagers": [
+        "dockerfile"
+      ],
       "pinDigests": true
     },
     {
       "description": "One pull request for all workflow action bumps instead of one per action",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github actions"
     },
     {
       "description": "One pull request for the Python dependency set",
-      "matchManagers": ["pip_requirements", "pip-compile"],
+      "matchManagers": [
+        "pip_requirements",
+        "pip-compile"
+      ],
       "groupName": "python dependencies"
     }
   ]
