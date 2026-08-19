@@ -131,6 +131,34 @@ Renovate can therefore miss newly published *tags* for `python` and `postgres` �
 `index.docker.io` and appear unaffected, but that has not yet been confirmed by a run in
 which the digest actually moved.
 
+### Transitive pins must not be bumped individually
+
+*Observed 2026-08-19, after it broke `main`.*
+
+Renovate proposed `pydantic-core` 2.46.4 → 2.48.0. `pydantic==2.13.4` pins
+`pydantic-core==2.46.4` exactly, so the resulting lock was unsatisfiable and every install
+failed:
+
+```
+Because pydantic==2.13.4 depends on pydantic-core==2.46.4 and you require
+pydantic-core==2.48.0, we can conclude that your requirements are unsatisfiable.
+```
+
+The `pip-compile` manager had classified it correctly — `depType: indirect`, `is disabled`.
+The update came from `pip_requirements`, which had also claimed the `.txt` files, because
+**`managerFilePatterns` adds to a manager's built-in patterns rather than replacing them.**
+`pip_requirements` matches `requirements.txt` by default; pointing it at `.in` files added
+a pattern without removing that one. To that manager a compiled lock is just a list of
+pins, with no notion of `# via pydantic`.
+
+Two package rules now close it: `pip_requirements` is disabled for the `.txt` files, and
+`pip-compile` is disabled for `indirect` deps. Transitive versions change only through
+`lockFileMaintenance`, which re-resolves the whole graph.
+
+The wider lesson is not about Renovate. CI ran on that pull request and failed, and the
+merge went through anyway because `main` has no required status checks. The bot proposing
+an impossible update is normal; nothing stopping it from landing is the actual defect.
+
 The fix would be a Docker Hub account plus a token, supplied through `hostRules`. That is
 another credential to manage for a narrow benefit, so it is deliberately not done. Revisit
 if a base image upgrade is ever missed.
