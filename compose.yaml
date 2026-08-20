@@ -3,23 +3,52 @@
 # Compose treat them as one project. Override locally via COMPOSE_PROJECT_NAME in .env.
 name: devops-lab
 
+# One environment block for every service that runs application code. The migrate service
+# and (from PR 2) the worker read the same settings; duplicating them is how they drift.
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  MAX_TARGETS: ${MAX_TARGETS:-50}
+  MIN_INTERVAL_SECONDS: ${MIN_INTERVAL_SECONDS:-30}
+  SEED_TARGETS: ${SEED_TARGETS:-}
+
 services:
   api:
     image: ghcr.io/hennifant/devops-lab-api:${IMAGE_TAG:-latest}
     restart: ${RESTART_POLICY:-unless-stopped}
     ports:
       - "${API_PORT:-8000}:8000"
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    environment: *app-environment
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      # /ready, not /health: this is what depends_on and the deployment smoke test gate
+      # on, and it is the only one of the two that can tell whether the database answers.
+      # The image's own HEALTHCHECK stays on /health, which asks the different question of
+      # whether the container should be restarted.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # One-shot. Migrations run before the application starts, as their own service rather
+  # than from an entrypoint: an entrypoint looks simpler and breaks the moment there is
+  # more than one replica racing to apply the same revision.
+  migrate:
+    image: ghcr.io/hennifant/devops-lab-api:${IMAGE_TAG:-latest}
+    # NOT ${RESTART_POLICY}. A one-shot service inheriting unless-stopped would run,
+    # exit 0, be restarted, exit 0, and loop forever — while api's
+    # depends_on: service_completed_successfully may never settle.
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
 
   db:
     image: postgres:18

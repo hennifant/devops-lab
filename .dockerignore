@@ -4,6 +4,9 @@
 *
 !requirements.txt
 !app
+!alembic
+!alembic.ini
 
-# app/ is re-included wholesale, so strip build artefacts back out.
+# The re-included directories come in wholesale, so strip build artefacts back out.
 app/**/__pycache__
+alembic/**/__pycache__

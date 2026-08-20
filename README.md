@@ -1,8 +1,9 @@
 # devops-lab
 
-A self-hosted DevOps lab. The application is deliberately small — a FastAPI service with
-three endpoints. Everything interesting happens around it: containerization, CI/CD,
-observability, alerting, and later Kubernetes and GitOps.
+A self-hosted DevOps lab. The application is an uptime checker, deliberately small and
+chosen for the failure modes it produces rather than its features — see
+[docs/app-requirements.md](docs/app-requirements.md). Everything interesting happens around
+it: containerization, CI/CD, observability, alerting, and later Kubernetes and GitOps.
 
 Runs on an Apple M2 (arm64) under Asahi Linux.
 
@@ -30,8 +31,10 @@ flowchart TD
     subgraph deploy["Deploy — self-hosted arm64 runner"]
         sync["rsync into ~/deploy/devops-lab"]
         writeenv["write .env from repository secrets"]
-        composeup["docker compose pull + up -d"]
-        sync --> writeenv --> composeup
+        composeup["docker compose pull + up -d<br/>migrate runs first, must exit 0"]
+        seed["seed, only if SEED_TARGETS is set"]
+        smoke["smoke test<br/>/ready · write + read back · metric moved"]
+        sync --> writeenv --> composeup --> seed --> smoke
     end
 
     push --> ci
@@ -47,6 +50,7 @@ Deploys always reference the commit SHA tag, never `:latest`.
 ```mermaid
 flowchart LR
     api["api<br/>:8000"]
+    migrate["migrate<br/>one-shot"]
     db[("postgres 18")]
     prom["prometheus<br/>:9090"]
     am["alertmanager<br/>:9093"]
@@ -54,6 +58,8 @@ flowchart LR
     gotify["Gotify"]
     phone["phone"]
 
+    migrate -->|"alembic upgrade head"| db
+    migrate -.->|"must exit 0 first"| api
     api -->|DATABASE_URL| db
     prom -->|"scrape /metrics"| api
     prom -->|"fires alerts"| am
@@ -92,14 +98,24 @@ project — they share the basename `devops-lab` — and would overwrite each ot
 
 ```bash
 cp .env.example .env          # fill in POSTGRES_* and uncomment the dev block
-.venv/bin/python -m pytest    # run the tests
+.venv/bin/python -m pytest    # tests needing a database skip without TEST_DATABASE_URL
 
-# dev stack: builds the API from the working tree
+# dev stack: builds the API from the working tree, runs migrations, then starts the API
 docker compose -f compose.yaml -f compose.dev.yaml up -d
 docker compose logs -f api
 ```
 
 The API is then on <http://localhost:18000>, Grafana on <http://localhost:13000>.
+
+```
+GET    /health                 liveness — touches nothing
+GET    /ready                  readiness — database reachable, migrations applied
+GET    /metrics                Prometheus exposition
+
+GET    /api/targets            POST to create, 201
+GET    /api/targets/{id}       PATCH {enabled}, DELETE
+GET    /api/status             counts of up / down / unknown
+```
 
 Plain `docker compose up -d` without the overlay pulls the API image from GHCR instead of
 building it, and will fail unless Docker is logged in to the registry.

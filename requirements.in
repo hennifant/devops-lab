@@ -1,8 +1,16 @@
 # Direct runtime dependencies. Intent lives here; requirements.txt is the compiled
 # lock and must never be edited by hand.
 #
-#   uv pip compile --universal requirements.in -o requirements.txt
+#   uv pip compile --universal requirements.in --output-file=requirements.txt
 fastapi
 uvicorn
-psycopg[binary]
+# The pool is a separate distribution reached through the extra. psycopg[binary] alone
+# resolves to psycopg + psycopg-binary and does not include psycopg-pool.
+psycopg[binary,pool]
 prometheus-fastapi-instrumentator
+# Migrations only. Pulls SQLAlchemy into the runtime image even though no application
+# code imports it — see ADR 0012.
+alembic
+# The worker's HTTP client (PR 2). Declared here rather than in the dev set because it
+# ships in the image; requirements-dev.in inherits it through -r requirements.in.
+httpx2

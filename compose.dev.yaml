@@ -11,3 +11,10 @@ services:
     build: .
     # Always build from the working tree instead of consulting GHCR.
     pull_policy: build
+
+  # Same image, so the overlay has to redirect it too — otherwise the dev stack runs the
+  # working tree's application code against the last CI build's migrations.
+  migrate:
+    image: devops-lab-api:dev
+    build: .
+    pull_policy: build
