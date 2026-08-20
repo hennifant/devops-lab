@@ -204,7 +204,16 @@ is not doing its job for this project.
 
 Constraints from work already done — breaking any of these breaks a documented decision.
 
-- **Python 3.14, FastAPI, psycopg 3.** `psycopg[binary]` is already declared and unused.
+- **Python 3.14, FastAPI, psycopg 3.** `psycopg[binary]` is declared and unused. Add the
+  `pool` extra.
+- **`httpx2` is currently a development dependency only.** It sits in `requirements-dev.in`
+  for the FastAPI `TestClient`. The worker needs an HTTP client at runtime, so it moves to
+  `requirements.in`; the line in `requirements-dev.in` is then redundant because that file
+  already pulls in `-r requirements.in`. Recompile both `.txt` files.
+- **Alembic drags SQLAlchemy into the deployed image.** `alembic` depends on `sqlalchemy`,
+  `mako`, `markupsafe` and `greenlet`. Because the `migrate` service runs the same image,
+  SQLAlchemy ships to production even though no application code imports it. Accepted
+  deliberately — see the decision below.
 - **Dependencies:** add to `requirements.in`, then recompile. Never edit a `.txt` by hand.
   Use `--output-file`, never `-o` — Renovate replays the header command and its parser
   rejects the short form ([ADR 0006](adr/0006-compiled-requirements-with-uv.md)).
@@ -240,9 +249,14 @@ That is evidence worth promoting a build to production on. `curl /health` is not
 
 ## Data access: hand-written SQL on psycopg 3
 
-No ORM, no query builder. `psycopg` with `psycopg_pool` — already declared in
-`requirements.in` and currently unused, so no new dependency. Alembic is used for
-migrations only, with hand-written `op.execute` DDL rather than `autogenerate`.
+No ORM, no query builder. `psycopg` with `psycopg_pool`, and Alembic for migrations only,
+with hand-written `op.execute` DDL rather than `autogenerate`.
+
+**Correction to an earlier draft of this document:** `requirements.in` declares
+`psycopg[binary]`, which resolves to `psycopg` and `psycopg-binary` and *not* the pool.
+The pool is a separate distribution, `psycopg-pool`, reached through the extra
+`psycopg[binary,pool]`. It is a new dependency — pure Python with wheels for both target
+architectures, so harmless, but the claim "no new dependency" was wrong. Say so in the ADR.
 
 The reason is the stated learning goal. "A query that can get slow" is only instructive if
 you can put `EXPLAIN ANALYZE` in front of the exact statement that ran and watch the plan
@@ -323,7 +337,7 @@ Two mitigations against a single host doing double outbound traffic:
 PR 1  Contract and database    Alembic, schema, /ready, config from env,
                                structured logs, SIGTERM, seed, targets CRUD,
                                smoke test upgrade, Postgres service in CI   → ADR 0012
-PR 2  Worker and telemetry     checks, results, uptime_* metrics,
+PR 2  Worker and telemetry     checks, results, devops_lab_* metrics,
                                scrape job, alert rules                      → ADR 0013
 PR 3  Hardening                indexes with EXPLAIN evidence, retention,
                                Grafana dashboard as code                    → ADR 0014
@@ -343,7 +357,7 @@ understanding: a broken deploy would have ten suspects instead of two.
 
 ## Additional constraints not raised in the questions
 
-- **Cardinality has a hard ceiling.** `uptime_checks_total{target, result}` is
+- **Cardinality has a hard ceiling.** `devops_lab_checks_total{target, result}` is
   targets × 3. Cap targets at 50 and reject creation beyond it with a 4xx. Document the
   number. An uncapped label on user-supplied data is how Prometheus dies.
 - **CI keeps fast tests fast.** A `postgres:18` service container is right for tests that
@@ -355,3 +369,115 @@ understanding: a broken deploy would have ten suspects instead of two.
   They will fire into nothing until Phase 3 gives Alertmanager a destination. That is
   expected, and a rule that fires into nothing is still worth writing — you can see it in
   the Alertmanager UI.
+
+---
+
+# Round 2: corrections and remaining decisions
+
+## Alembic and SQLAlchemy in the runtime image
+
+Accepted. Name it in ADR 0012 so nobody later reads it as an oversight.
+
+The tension is real: the data-access decision is "no ORM", and Alembic is SQLAlchemy's
+migration tool. Using it without SQLAlchemy means paying for half a tool. `yoyo-migrations`
+would avoid the dependency entirely and is a closer fit to hand-written SQL.
+
+Alembic wins anyway, for a reason outside the code: it is what people use, so it is the
+transferable skill. The cost is a handful of megabytes and four more packages for Renovate
+to track and Trivy to scan — not a design flaw, just a bill. `greenlet` is compiled but
+publishes wheels for `aarch64` and `x86_64`, so multi-architecture builds are unaffected.
+
+## Scheduling: the LATERAL join, unindexed in PR 2
+
+Option (a). One source of truth; no denormalised `last_checked_at` that can drift.
+
+**Ship it without the index in PR 2, on purpose.** The alternative — index immediately and
+measure on `/api/targets/{id}/results` instead — produces a weaker lesson. A slow results
+endpoint is a slow endpoint. A slow *scheduling* query starves the worker loop, which shows
+up as a stale `devops_lab_worker_last_run_timestamp_seconds` and fires an alert. The
+degradation surfaces as an operational symptom rather than a benchmark, which is the whole
+point of doing it in this order.
+
+Two conditions on that, so it stays an experiment rather than an accident:
+
+- Instrument it from the start: `devops_lab_db_query_duration_seconds{query="schedule"}`.
+  That histogram is the measuring instrument for the before-and-after in PR 3, and it makes
+  the degradation visible before it hurts.
+- Document the escape hatch in ADR 0013 — the one-line `CREATE INDEX CONCURRENTLY` to run
+  by hand if it degrades faster than expected. An experiment you cannot stop is a hazard.
+
+## Seed: automatic, from `SEED_TARGETS`, gated on it being set
+
+Mechanism (b) + (e), with one change: **the seed step runs only when `SEED_TARGETS` is
+non-empty.**
+
+Idempotent upsert on `name`, immediately after `migrate`, list parsed from the variable,
+which `deploy.yml` already writes per environment. No code path knows an environment name.
+
+The change matters for production. With an unconditional seed, deleting a target through
+the API would see it silently reappear on the next deploy — the deployment would own
+application data that the API claims to own. So `SEED_TARGETS` is set in staging and left
+empty in production, where targets are created through the API by a human and persist.
+
+Staging's value points at the staging stack itself:
+
+```
+SEED_TARGETS=api-self=http://api:8000/health
+```
+
+Zero external traffic, and the whole path still runs: worker → HTTP → database → metrics.
+
+## Smoke test: create, verify, delete
+
+Option (a), with `DELETE` in an `always()` step so an aborted run leaves nothing behind.
+Use a name unique per run — include the run id — so a previously failed cleanup cannot
+collide.
+
+The metric assertion is reworded rather than dropped. Read `/metrics` *between* the POST
+and the DELETE:
+
+```
+1. GET /ready                        → 200
+2. GET /metrics                      → record devops_lab_targets_total as baseline
+3. POST /api/targets                 → 201
+4. GET  /api/targets/{id}            → 200, the record round-tripped through Postgres
+5. GET /metrics                      → devops_lab_targets_total == baseline + 1
+6. DELETE /api/targets/{id}          → in always()
+```
+
+That is precise, survives cleanup, and needs no metric invented for the test's benefit.
+
+## Logging: stdlib `logging` with a JSON formatter
+
+Option (a). The problem is not formatting, it is that uvicorn owns `uvicorn`,
+`uvicorn.access` and `uvicorn.error`, and that cost is identical in all three options. No
+new dependency for something a `dictConfig` and thirty lines cover.
+
+One refinement: **disable uvicorn's access log** and emit access records from a middleware
+instead. Routing uvicorn's access logger through a JSON formatter yields JSON wrapping a
+preformatted string — structurally valid, semantically useless, because method, path,
+status and duration stay trapped inside one text field. A middleware emits them as real
+fields, and it already has the duration that the metrics need.
+
+## `enabled`: yes, `PATCH`, and remove the series
+
+Option (a). Silencing a known-broken target without destroying its history is exactly the
+move an operator makes against a permanently firing alert; `DELETE` cascades the history
+away and is the wrong tool.
+
+And yes — **a disabled target's `devops_lab_target_up` series must be removed**, not frozen.
+A stuck gauge means `target_up == 0 for 10m` fires against something deliberately
+unmonitored. That is how people learn to ignore alerts.
+
+## On the self-decided list
+
+All sound. One correction:
+
+**Startup configuration validation cannot compare against the smallest
+`interval_seconds`.** That value lives in the database, so checking it at startup either
+requires a query — which defeats fail-fast, and fails when the database is briefly gone —
+or reads a value that changes the moment someone creates a target.
+
+Keep it purely at configuration level: introduce `MIN_INTERVAL_SECONDS`, enforce it when a
+target is created, and assert `CHECK_TIMEOUT_SECONDS < MIN_INTERVAL_SECONDS` at startup.
+Same protection against overlapping checks, no database dependency in the startup path.
