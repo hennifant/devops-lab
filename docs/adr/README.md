@@ -22,3 +22,4 @@ Start from [0000-template.md](0000-template.md).
 | [0008](0008-renovate-as-an-action.md) | Renovate as a self-hosted Action, and a pinned base image digest | 2026-08-17 |
 | [0009](0009-restart-policy-and-pinned-monitoring-images.md) | Restart policy, and pinned monitoring images | 2026-08-19 |
 | [0010](0010-public-repository.md) | Public repository, and the exposure that comes with it | 2026-08-20 |
+| [0011](0011-build-once-deploy-many.md) | Build once, deploy many | 2026-08-20 |

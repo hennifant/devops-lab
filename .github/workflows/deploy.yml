@@ -16,7 +16,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # Build once, deploy many. Both jobs deploy the *same* image, identified by the commit
+  # SHA that CI built. Nothing is rebuilt between environments, so what is approved for
+  # production is byte-for-byte what staging ran.
+  staging:
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
@@ -26,15 +29,22 @@ jobs:
       - Linux
       - ARM64
 
+    environment:
+      name: staging
+      url: http://127.0.0.1:28000
+
     permissions:
       contents: read
       packages: read
 
     env:
-      # The stack does not run from the runner workspace. actions/checkout cleans that
-      # directory on every run, which replaces bind-mounted files and leaves running
-      # containers pointing at deleted inodes.
-      DEPLOY_DIR: /home/hennifant/deploy/devops-lab
+      DEPLOY_DIR: /home/hennifant/deploy/devops-lab-stg
+      COMPOSE_PROJECT: devops-lab-stg
+      API_PORT: "28000"
+      # Staging runs only the application under test. The monitoring stack is exercised by
+      # production and would otherwise double the container count on a single host for no
+      # additional signal.
+      SERVICES: api db
 
     steps:
       - name: Checkout repository
@@ -59,20 +69,117 @@ jobs:
           umask 077
           hash=$(find monitoring -type f -exec sha256sum {} + | sort | sha256sum | cut -c1-12)
           cat > "$DEPLOY_DIR/.env" <<EOF
+          COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT
           IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
           MONITORING_CONFIG_HASH=$hash
+          API_PORT=$API_PORT
           POSTGRES_USER=${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
           EOF
 
-      - name: Deploy stack
+      - name: Deploy
+        run: |
+          cd "$DEPLOY_DIR"
+          docker compose pull $SERVICES
+          docker compose up -d $SERVICES
+
+      - name: Smoke test
+        run: |
+          cd "$DEPLOY_DIR"
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 "http://127.0.0.1:${API_PORT}/health" >/dev/null; then
+              echo "healthy after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::staging did not become healthy within 60s"
+          docker compose logs --tail 50 api
+          exit 1
+
+      - name: Show deployment status
+        if: always()
+        run: |
+          cd "$DEPLOY_DIR"
+          docker compose ps
+
+  production:
+    needs: staging
+    runs-on:
+      - self-hosted
+      - Linux
+      - ARM64
+
+    # Carries a required reviewer, so GitHub pauses here and waits for a human before the
+    # job starts. This is the promotion gate.
+    environment:
+      name: production
+      url: http://127.0.0.1:8000
+
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      DEPLOY_DIR: /home/hennifant/deploy/devops-lab
+      COMPOSE_PROJECT: devops-lab
+      API_PORT: "8000"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync deployment directory
+        run: |
+          mkdir -p "$DEPLOY_DIR"
+          rsync -a --delete --exclude '.git' --exclude '.env' ./ "$DEPLOY_DIR/"
+
+      - name: Write deployment environment
+        run: |
+          umask 077
+          hash=$(find monitoring -type f -exec sha256sum {} + | sort | sha256sum | cut -c1-12)
+          cat > "$DEPLOY_DIR/.env" <<EOF
+          COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT
+          IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
+          MONITORING_CONFIG_HASH=$hash
+          API_PORT=$API_PORT
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          EOF
+
+      - name: Deploy
         run: |
           cd "$DEPLOY_DIR"
           docker compose pull
           docker compose up -d --remove-orphans
 
+      - name: Smoke test
+        run: |
+          cd "$DEPLOY_DIR"
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 "http://127.0.0.1:${API_PORT}/health" >/dev/null; then
+              echo "healthy after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::production did not become healthy within 60s"
+          docker compose logs --tail 50 api
+          exit 1
+
       - name: Show deployment status
+        if: always()
         run: |
           cd "$DEPLOY_DIR"
           docker compose ps

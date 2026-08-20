@@ -19,10 +19,15 @@ GitHub Actions (ci.yml, ubuntu-latest)
    │
    ▼  workflow_run: CI completed & success
 GitHub Actions (deploy.yml, self-hosted arm64 runner on the M2)
-   ├── rsync workspace → ~/deploy/devops-lab   (never deploys from the workspace itself)
-   ├── write .env from repository secrets
-   └── docker compose pull && docker compose up -d
+   │  build once, deploy many — both stages get the SAME image:<sha>
+   ├── staging      automatic    api + db only        → smoke test
+   │                             ~/deploy/devops-lab-stg
+   └── production   REQUIRES APPROVAL   full stack
+                                 ~/deploy/devops-lab
 ```
+
+Neither stage deploys from the runner workspace; both rsync into their own directory and
+write `.env` from repository secrets. See [ADR 0011](docs/adr/0011-build-once-deploy-many.md).
 
 Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 
@@ -90,6 +95,7 @@ Two Compose projects run on this machine and must never merge:
 | Project | Directory | Image source | Ports |
 | --- | --- | --- | --- |
 | `devops-lab` | `~/deploy/devops-lab` | GHCR, SHA tag | 8000, 9090, 9093, 3000 |
+| `devops-lab-stg` | `~/deploy/devops-lab-stg` | GHCR, same SHA tag | 28000 |
 | `devops-lab-dev` | this checkout | built from working tree | 18000, 19090, 19093, 13000 |
 
 They were previously one project by accident: Compose derives the project name from the
@@ -184,9 +190,11 @@ Renovate maintains the pins.
 Remaining Phase 1 backlog, in priority order:
 
 1. Alertmanager has a receiver with no destination — alerts fire into nothing.
-2. Deploy does not wait for health, run a smoke test, or roll back on failure.
+2. The deploy has a smoke test but no rollback: a failed production deploy leaves the
+   broken version running.
 3. Grafana admin credentials at default.
 4. The database is provisioned but unused — `psycopg` is installed and never imported.
+   Until it is, the smoke test can only prove the process serves HTTP, not that it works.
 
 ## Roadmap
 
