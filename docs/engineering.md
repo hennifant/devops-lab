@@ -130,9 +130,15 @@ deleted one, so a config change would silently never take effect.
   metrics and silence alerts through the Alertmanager API. Only `api` is published on the LAN.
 - Grafana still runs on the default `admin`/`admin` credentials. Loopback binding is what
   currently protects it; that is not a substitute for setting a password.
-- **Never move a `pull_request`-triggered job onto the self-hosted runner.** Fork PRs would
-  execute arbitrary code on the M2 with Docker socket access. The `test` job stays on
-  `ubuntu-latest`.
+- **The repository is public.** Anything committed is world-readable from the moment it
+  lands. See [ADR 0010](docs/adr/0010-public-repository.md).
+- **Never move a `pull_request`-triggered job onto the self-hosted runner.** Anyone can open
+  a pull request on a public repository; such a job would execute a stranger's code on the
+  M2 with Docker socket access. The `test` job stays on `ubuntu-latest`. This is the single
+  most important rule in this file.
+- **Never use `pull_request_target`.** It runs with the base repository's secrets.
+- `main` is protected: pull request required, `test` must pass, admins included, no force
+  pushes. A force push needs the protection removed first.
 - The runner is trusted infrastructure. Treat anything it executes as running on the host.
 
 ### Images and reproducibility
