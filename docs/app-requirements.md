@@ -233,3 +233,125 @@ Once this exists, the deployment smoke test stops being a liveness poll and beco
 ```
 
 That is evidence worth promoting a build to production on. `curl /health` is not.
+
+---
+
+# Decisions on the implementation questions
+
+## Data access: hand-written SQL on psycopg 3
+
+No ORM, no query builder. `psycopg` with `psycopg_pool` — already declared in
+`requirements.in` and currently unused, so no new dependency. Alembic is used for
+migrations only, with hand-written `op.execute` DDL rather than `autogenerate`.
+
+The reason is the stated learning goal. "A query that can get slow" is only instructive if
+you can put `EXPLAIN ANALYZE` in front of the exact statement that ran and watch the plan
+change when an index appears. An abstraction layer makes that indirect. The ORM failure
+class — N+1, lazy loading, session lifecycle — is a genuine skill and a distraction from
+this project's subject.
+
+The cost is real: serialisation by hand, more boilerplate, and migrations written as SQL
+instead of generated. Accepted, and the application is small enough to bound it.
+
+**Connection pool lifecycle.** Open an `AsyncConnectionPool` in a FastAPI lifespan handler
+and close it on shutdown. This is not decoration — it is what makes the SIGTERM requirement
+real. A pool that is never closed leaves connections held on the server after the container
+is gone, and Postgres will keep them until timeout.
+
+## Worker: its own container, from the same image
+
+A `worker` service running `ghcr.io/hennifant/devops-lab-api:<sha>` with a different
+`command`. One image, one build, no second artefact — [ADR 0011](adr/0011-build-once-deploy-many.md)
+continues to apply unchanged.
+
+An asyncio task inside the API process would give one container fewer and destroy the
+reason the worker exists. The point is a *second failure surface*: the API serving traffic
+while the worker is dead, and that being visible. Inside the same process it is neither
+separately restartable nor separately observable.
+
+A separate image and repository would be cleaner in principle and doubles the build path
+for no benefit at this size.
+
+Three details that follow:
+
+- **Metrics port: 9101, not 9100.** `prometheus_client.start_http_server(9101)` in the
+  worker. 9100 is node-exporter's conventional port, and node-exporter arrives in Phase 3.
+  Colliding now guarantees confusion later.
+- **No `ports:` entry for the worker.** Prometheus reaches it over the Compose network as
+  `worker:9101`. Publishing it on the host would put an unauthenticated endpoint on the LAN.
+- **`restart: ${RESTART_POLICY:-unless-stopped}`** like every other service
+  ([ADR 0009](adr/0009-restart-policy-and-pinned-monitoring-images.md)).
+
+### The `migrate` service must set `restart: "no"`
+
+`compose.yaml` applies `restart: ${RESTART_POLICY:-unless-stopped}` to every service. A
+one-shot service inheriting that will run `alembic upgrade head`, exit 0, be restarted,
+exit 0, and loop forever — while `depends_on: service_completed_successfully` may never
+settle. Override it explicitly on that service.
+
+### Compose healthcheck moves to `/ready`
+
+The image `HEALTHCHECK` stays on `/health` — it answers "should this container be
+restarted", and restarting an API because the database is briefly gone is wrong.
+
+The Compose healthcheck for `api` moves to `/ready`, because that is what `depends_on`
+and the smoke test should gate on. A transient database outage marking `api` unhealthy is
+correct behaviour, not a bug.
+
+The worker has no HTTP API; healthcheck it against its metrics port.
+
+## Staging runs the worker
+
+Staging becomes `api db migrate worker`.
+
+This does not contradict [ADR 0011](adr/0011-build-once-deploy-many.md). That record
+excluded Prometheus, Alertmanager and Grafana from staging because they are *infrastructure*
+already exercised by production. The worker is *application code under test*. Different
+category — promoting it untested would leave the second failure surface unverified, which
+is the one thing staging is well placed to catch here.
+
+Two mitigations against a single host doing double outbound traffic:
+
+- A larger `CHECK_INTERVAL_SECONDS` in staging than in production.
+- **Staging seeds point at the staging stack's own `/health`.** Self-referential, zero
+  external traffic, and it still exercises the whole path: worker → HTTP → database →
+  metrics. Production seeds may point outward.
+
+## Delivery: three pull requests
+
+```
+PR 1  Contract and database    Alembic, schema, /ready, config from env,
+                               structured logs, SIGTERM, seed, targets CRUD,
+                               smoke test upgrade, Postgres service in CI   → ADR 0012
+PR 2  Worker and telemetry     checks, results, uptime_* metrics,
+                               scrape job, alert rules                      → ADR 0013
+PR 3  Hardening                indexes with EXPLAIN evidence, retention,
+                               Grafana dashboard as code                    → ADR 0014
+```
+
+Each merges green, deploys to staging automatically, and waits for approval before
+production. Every ADR number above is provisional — check `docs/adr/README.md` for the
+next free one at the time of writing.
+
+One consequence to make deliberate rather than accidental: **PR 2 ships a query that is
+knowingly slow, and PR 3 fixes it.** That inversion is the point — it produces a
+before-and-after measurement instead of an assertion that an index helps. Record it in
+ADR 0013 so nobody later reads it as an oversight.
+
+A single pull request would be the fastest route to a running system and the worst to
+understanding: a broken deploy would have ten suspects instead of two.
+
+## Additional constraints not raised in the questions
+
+- **Cardinality has a hard ceiling.** `uptime_checks_total{target, result}` is
+  targets × 3. Cap targets at 50 and reject creation beyond it with a 4xx. Document the
+  number. An uncapped label on user-supplied data is how Prometheus dies.
+- **CI keeps fast tests fast.** A `postgres:18` service container is right for tests that
+  need a database; tests that do not should not wait for one. The connection URL comes from
+  an environment variable with a default pointing at the service container.
+- **Alert rules land in `monitoring/prometheus/rules/`** and are picked up by the deploy
+  through `MONITORING_CONFIG_HASH`, which forces Prometheus to be recreated when the
+  configuration changes ([ADR 0003](adr/0003-deployment-env-from-repository-secrets.md)).
+  They will fire into nothing until Phase 3 gives Alertmanager a destination. That is
+  expected, and a rule that fires into nothing is still worth writing — you can see it in
+  the Alertmanager UI.
