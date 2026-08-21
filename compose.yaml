@@ -103,6 +103,32 @@ services:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
 
+  # A second process, and therefore a second failure surface: the API can serve traffic
+  # while this is dead, and that has to be visible. Same image, different command — one
+  # build, one artefact, ADR 0011 unchanged.
+  worker:
+    image: ghcr.io/hennifant/devops-lab-api:${IMAGE_TAG:-latest}
+    restart: ${RESTART_POLICY:-unless-stopped}
+    command: ["python", "-m", "app.worker"]
+    # No ports: Prometheus reaches the metrics endpoint over the Compose network as
+    # worker:9101. Publishing it would put an unauthenticated endpoint on the LAN.
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CHECK_INTERVAL_SECONDS: ${CHECK_INTERVAL_SECONDS:-10}
+      CHECK_TIMEOUT_SECONDS: ${CHECK_TIMEOUT_SECONDS:-10}
+      CHECK_CONCURRENCY: ${CHECK_CONCURRENCY:-5}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/metrics')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # Notification server. Unlike Prometheus and Alertmanager it has real authentication —
   # user login and per-application tokens — so it is the one monitoring service bound to
   # the LAN rather than loopback. Without that the phone cannot reach it. Once a tunnel
