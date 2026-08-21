@@ -160,6 +160,9 @@ deleted one, so a config change would silently never take effect.
 
 ### Security constraints
 
+- **Gotify is the one exception** to the loopback rule: it has user login and application
+  tokens, so it is bound to the LAN in order to reach a phone. Temporary — a tunnel would
+  remove the need. See [ADR 0014](docs/adr/0014-alerting-to-gotify.md).
 - Prometheus, Alertmanager and Grafana bind to `127.0.0.1` only. The loopback address is
   hardcoded in [compose.yaml](compose.yaml), not a variable — Prometheus and Alertmanager
   have no authentication whatsoever, so exposing them would let anyone on the LAN read all

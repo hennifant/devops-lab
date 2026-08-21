@@ -103,7 +103,35 @@ services:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
 
+  # Notification server. Unlike Prometheus and Alertmanager it has real authentication —
+  # user login and per-application tokens — so it is the one monitoring service bound to
+  # the LAN rather than loopback. Without that the phone cannot reach it. Once a tunnel
+  # exists this should move back behind 127.0.0.1; see ADR 0014.
+  gotify:
+    image: gotify/server:3.0.0
+    restart: ${RESTART_POLICY:-unless-stopped}
+    ports:
+      - "${GOTIFY_PORT:-8090}:80"
+    environment:
+      GOTIFY_DEFAULTUSER_PASS: ${GOTIFY_ADMIN_PASSWORD:?GOTIFY_ADMIN_PASSWORD must be set}
+    volumes:
+      - gotify-data:/app/data
+
+  # Alertmanager has no Gotify receiver and its webhook payload does not match Gotify's
+  # message API, so this translates between them. No ports: only Alertmanager reaches it,
+  # over the Compose network.
+  gotify-bridge:
+    image: druggeri/alertmanager_gotify_bridge:2.3.2
+    restart: ${RESTART_POLICY:-unless-stopped}
+    depends_on:
+      gotify:
+        condition: service_started
+    environment:
+      GOTIFY_ENDPOINT: http://gotify:80/message
+      GOTIFY_TOKEN: ${GOTIFY_TOKEN:-}
+
 volumes:
   postgres-data:
   prometheus-data:
   grafana-data:
+  gotify-data:
