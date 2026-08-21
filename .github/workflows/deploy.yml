@@ -44,7 +44,11 @@ jobs:
       # Staging runs only the application under test. The monitoring stack is exercised by
       # production and would otherwise double the container count on a single host for no
       # additional signal.
-      SERVICES: api db
+      SERVICES: api db migrate
+      # Self-referential on purpose: the seeded target points at the staging stack's own
+      # /health, so the worker (PR 2) exercises the full path — worker → HTTP → database →
+      # metrics — without adding outbound traffic from a host that also runs production.
+      SEED_TARGETS: api-self=http://api:8000/health
 
     steps:
       - name: Checkout repository
@@ -73,6 +77,7 @@ jobs:
           IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
           MONITORING_CONFIG_HASH=$hash
           API_PORT=$API_PORT
+          SEED_TARGETS=$SEED_TARGETS
           POSTGRES_USER=${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
@@ -82,21 +87,31 @@ jobs:
         run: |
           cd "$DEPLOY_DIR"
           docker compose pull $SERVICES
+          # migrate is a dependency of api, so this blocks until it has exited zero.
           docker compose up -d $SERVICES
 
-      - name: Smoke test
+      - name: Seed
         run: |
           cd "$DEPLOY_DIR"
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 3 "http://127.0.0.1:${API_PORT}/health" >/dev/null; then
-              echo "healthy after ${i} attempt(s)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::staging did not become healthy within 60s"
-          docker compose logs --tail 50 api
-          exit 1
+          if grep -qE '^SEED_TARGETS=.+' .env; then
+            docker compose run --rm migrate python -m app.seed
+          else
+            echo "SEED_TARGETS is empty, nothing to seed"
+          fi
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          cd "$DEPLOY_DIR"
+          ./scripts/smoke-test.sh "http://127.0.0.1:${API_PORT}" "smoke-${{ github.run_id }}"
+
+      - name: Remove the smoke test target
+        if: always()
+        run: |
+          id="${{ steps.smoke.outputs.target_id }}"
+          [ -n "$id" ] || exit 0
+          curl -fsS -X DELETE "http://127.0.0.1:${API_PORT}/api/targets/${id}" \
+            && echo "removed smoke test target ${id}"
 
       - name: Show deployment status
         if: always()
@@ -153,6 +168,10 @@ jobs:
           IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
           MONITORING_CONFIG_HASH=$hash
           API_PORT=$API_PORT
+          # Deliberately empty. Production targets are created through the API by a human
+          # and must persist; an unconditional seed would make the deployment an owner of
+          # application data and resurrect anything deleted through the API.
+          SEED_TARGETS=
           POSTGRES_USER=${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
@@ -162,21 +181,31 @@ jobs:
         run: |
           cd "$DEPLOY_DIR"
           docker compose pull
+          # migrate is a dependency of api, so this blocks until it has exited zero.
           docker compose up -d --remove-orphans
 
-      - name: Smoke test
+      - name: Seed
         run: |
           cd "$DEPLOY_DIR"
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 3 "http://127.0.0.1:${API_PORT}/health" >/dev/null; then
-              echo "healthy after ${i} attempt(s)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::production did not become healthy within 60s"
-          docker compose logs --tail 50 api
-          exit 1
+          if grep -qE '^SEED_TARGETS=.+' .env; then
+            docker compose run --rm migrate python -m app.seed
+          else
+            echo "SEED_TARGETS is empty, nothing to seed"
+          fi
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          cd "$DEPLOY_DIR"
+          ./scripts/smoke-test.sh "http://127.0.0.1:${API_PORT}" "smoke-${{ github.run_id }}"
+
+      - name: Remove the smoke test target
+        if: always()
+        run: |
+          id="${{ steps.smoke.outputs.target_id }}"
+          [ -n "$id" ] || exit 0
+          curl -fsS -X DELETE "http://127.0.0.1:${API_PORT}/api/targets/${id}" \
+            && echo "removed smoke test target ${id}"
 
       - name: Show deployment status
         if: always()

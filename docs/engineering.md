@@ -20,9 +20,9 @@ GitHub Actions (ci.yml, ubuntu-latest)
    ▼  workflow_run: CI completed & success
 GitHub Actions (deploy.yml, self-hosted arm64 runner on the M2)
    │  build once, deploy many — both stages get the SAME image:<sha>
-   ├── staging      automatic    api + db only        → smoke test
+   ├── staging      automatic    api + db + migrate   → seed → smoke test
    │                             ~/deploy/devops-lab-stg
-   └── production   REQUIRES APPROVAL   full stack
+   └── production   REQUIRES APPROVAL   full stack    → smoke test (no seed)
                                  ~/deploy/devops-lab
 ```
 
@@ -42,14 +42,27 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
         │ postgres │             │  grafana   │
         │   18     │             │   :3000    │
         └──────────┘             └────────────┘
+             ▲
+             │ alembic upgrade head, exits 0 before api starts
+        ┌──────────┐
+        │ migrate  │  one-shot, same image as api, restart: "no"
+        └──────────┘
 ```
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| [app/main.py](app/main.py) | FastAPI app: `/`, `/health`, `/metrics` |
-| [tests/](tests/) | pytest suite against the app via `TestClient` |
+| [app/main.py](app/main.py) | FastAPI app: `/`, `/health`, `/ready`, `/metrics`, `/api/targets`, `/api/status` |
+| [app/config.py](app/config.py) | settings from environment variables; missing credentials fail loudly |
+| [app/db.py](app/db.py) | async pool, hand-written SQL, readiness checks |
+| [app/logging.py](app/logging.py) | structured JSON logging to stdout |
+| [app/metrics.py](app/metrics.py) | `devops_lab_*` metric objects, shared with the worker |
+| [app/seed.py](app/seed.py) | `python -m app.seed` — idempotent upsert from `SEED_TARGETS` |
+| [alembic/](alembic/) | migrations, hand-written DDL, one per pull request |
+| [scripts/smoke-test.sh](scripts/smoke-test.sh) | deployment smoke test: readiness, round trip, metric |
+| [tests/](tests/) | pytest suite; `db`-marked tests need a live Postgres |
+| [docs/app-requirements.md](docs/app-requirements.md) | what the application must be, and why |
 | [Dockerfile](Dockerfile) | python:3.14-slim, non-root `appuser`, HEALTHCHECK |
 | [compose.yaml](compose.yaml) | api, db, prometheus, alertmanager, grafana |
 | [compose.dev.yaml](compose.dev.yaml) | dev overlay: builds `api` locally instead of pulling |
@@ -67,8 +80,22 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 ## Commands
 
 ```bash
-# tests (needs .venv active or use .venv/bin/python)
+# tests. Without TEST_DATABASE_URL the db-marked tests skip; CI sets REQUIRE_DB=1 so that
+# a missing database fails the job instead of silently skipping half the suite.
 .venv/bin/python -m pytest
+docker run --rm -d --name pgtest -p 55432:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=devops_test postgres:18
+TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55432/devops_test \
+  .venv/bin/python -m pytest
+
+# migrations. The dev overlay is required, or `run` pulls the image from GHCR.
+docker compose -f compose.yaml -f compose.dev.yaml run --rm migrate alembic upgrade head
+docker compose -f compose.yaml -f compose.dev.yaml run --rm migrate alembic downgrade -1
+docker compose -f compose.yaml -f compose.dev.yaml \
+  run --rm -e SEED_TARGETS='api-self=http://api:8000/health' migrate python -m app.seed
+
+# the deployment smoke test, against any running stack
+GITHUB_OUTPUT=/dev/null ./scripts/smoke-test.sh http://127.0.0.1:18000 smoke-local
 
 # dev stack — always use the overlay, it builds api from the working tree
 docker compose -f compose.yaml -f compose.dev.yaml up -d
@@ -181,6 +208,13 @@ deleted one, so a config change would silently never take effect.
 Working end to end: push → test → multi-arch build → GHCR → self-hosted deploy with SHA tag,
 Prometheus scraping the API, Grafana with a provisioned Prometheus datasource.
 
+Done in PR 1 of the application work ([docs/app-requirements.md](docs/app-requirements.md)):
+Alembic migrations as their own Compose service, a `targets` table, `/ready` checking the
+database *and* the applied revision, configuration from the environment, structured JSON
+logs, graceful shutdown, a gated seed, and a smoke test that writes and reads a record
+instead of polling `/health`. See [ADR 0012](docs/adr/0012-hand-written-sql-with-alembic.md)
+and [ADR 0013](docs/adr/0013-liveness-and-readiness.md).
+
 Done in Phase 1: the two Compose projects are isolated, `monitoring/` is tracked, the deploy
 runs from a stable directory with `.env` written from repository secrets, Prometheus has a
 named volume, the monitoring ports are on loopback, dependencies and the base image digest
@@ -193,8 +227,6 @@ Remaining Phase 1 backlog, in priority order:
 2. The deploy has a smoke test but no rollback: a failed production deploy leaves the
    broken version running.
 3. Grafana admin credentials at default.
-4. The database is provisioned but unused — `psycopg` is installed and never imported.
-   Until it is, the smoke test can only prove the process serves HTTP, not that it works.
 
 ## Roadmap
 
@@ -202,9 +234,10 @@ Remaining Phase 1 backlog, in priority order:
 gets built on a base that has ten known holes; every one of them gets worse, not better,
 once Kubernetes is in the picture.
 
-**Phase 2 — make the app real.** Actually use Postgres: a schema, migrations, endpoints that
-read and write. Add meaningful application metrics. Without real queries and real failure
-modes there is nothing for monitoring to show and nothing for alerting to catch.
+**Phase 2 — make the app real (in progress).** An uptime checker, specified in
+[docs/app-requirements.md](docs/app-requirements.md) and delivered in three pull requests:
+PR 1 the operational contract and the database (done), PR 2 the worker and its telemetry,
+PR 3 indexes with before-and-after evidence, retention, and a provisioned dashboard.
 
 **Phase 3 — close the alerting loop.** Self-hosted Gotify plus the Alertmanager→Gotify webhook
 bridge, so alerts reach a phone. Add node-exporter and cAdvisor so host and container metrics

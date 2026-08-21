@@ -17,7 +17,32 @@ concurrency:
 
 jobs:
   test:
+    # Stays on ubuntu-latest. This job runs on pull_request, anyone can open one against a
+    # public repository, and the self-hosted runner has Docker socket access on the M2.
     runs-on: ubuntu-latest
+
+    # The database tests bring their own Postgres rather than mocking one, so they
+    # exercise the same migrations the deployment applies.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: devops_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/devops_test
+      # Turns "no database" from a skip into a failure. Without it, a service container
+      # that failed to start would leave the database suite silently unrun and the job green.
+      REQUIRE_DB: "1"
 
     steps:
       - name: Checkout repository
