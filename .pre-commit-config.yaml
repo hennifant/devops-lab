@@ -1,0 +1,13 @@
+# Local secret scanning, run before a commit is written.
+#
+#   pre-commit install     once per clone, or the hooks never run
+#
+# gitleaks scans the *staged* diff, so gitignored files such as .env are never seen.
+# There is deliberately no .gitleaks.toml: scanning this repository's full history and
+# working tree produced no findings beyond .env itself, and writing an allowlist before
+# there is anything to allow is how a scanner becomes noise that gets ignored.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

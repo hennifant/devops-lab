@@ -3,3 +3,4 @@
 #   uv pip compile --universal requirements-dev.in --output-file=requirements-dev.txt
 -r requirements.in
 pytest
+pre-commit

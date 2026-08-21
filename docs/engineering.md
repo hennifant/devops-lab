@@ -80,6 +80,9 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 ## Commands
 
 ```bash
+# once per clone, or the secret-scanning hook never runs
+.venv/bin/pre-commit install
+
 # tests. Without TEST_DATABASE_URL the db-marked tests skip; CI sets REQUIRE_DB=1 so that
 # a missing database fails the job instead of silently skipping half the suite.
 .venv/bin/python -m pytest
@@ -199,6 +202,12 @@ deleted one, so a config change would silently never take effect.
 - **Language**: English for code, comments, commits, and docs.
 - Prefer changes that are visible in `git` over click-ops. A Grafana dashboard built in the
   UI and not exported to `monitoring/grafana/provisioning/` does not count as done.
+- **Secrets never reach a commit.** `pre-commit` runs gitleaks over the staged diff before
+  a commit is written; `.env` is gitignored, so it is never staged and never scanned.
+  GitHub push protection is the server-side backstop for provider-issued tokens. Neither
+  replaces the actual control, which is that credentials live in GitHub Secrets and the
+  deploy writes `.env` at run time — see
+  [ADR 0003](docs/adr/0003-deployment-env-from-repository-secrets.md).
 - **Structural decisions get an ADR** in [docs/adr/](docs/adr/), using
   [the template](docs/adr/0000-template.md). Records are immutable — supersede, never edit.
   The `Background` section is not optional: it is why this repository exists.
