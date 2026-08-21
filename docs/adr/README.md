@@ -26,3 +26,4 @@ Start from [0000-template.md](0000-template.md).
 | [0012](0012-hand-written-sql-with-alembic.md) | Hand-written SQL, with Alembic for migrations only | 2026-08-20 |
 | [0013](0013-liveness-and-readiness.md) | Liveness and readiness are separate questions | 2026-08-20 |
 | [0014](0014-alerting-to-gotify.md) | Alerting reaches a phone, through Gotify | 2026-08-21 |
+| [0015](0015-worker-and-telemetry.md) | The check worker, and telemetry worth alerting on | 2026-08-21 |

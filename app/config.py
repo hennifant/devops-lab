@@ -49,6 +49,10 @@ class Settings:
     log_level: str
     max_targets: int
     min_interval_seconds: int
+    check_interval_seconds: int
+    check_timeout_seconds: int
+    check_concurrency: int
+    worker_metrics_port: int
     db_pool_min: int
     db_pool_max: int
     seed_targets: str
@@ -60,10 +64,22 @@ class Settings:
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
             max_targets=_positive_int("MAX_TARGETS", 50),
             min_interval_seconds=_positive_int("MIN_INTERVAL_SECONDS", 30),
+            check_interval_seconds=_positive_int("CHECK_INTERVAL_SECONDS", 10),
+            check_timeout_seconds=_positive_int("CHECK_TIMEOUT_SECONDS", 10),
+            check_concurrency=_positive_int("CHECK_CONCURRENCY", 5),
+            worker_metrics_port=_positive_int("WORKER_METRICS_PORT", 9101),
             db_pool_min=_positive_int("DB_POOL_MIN", 1),
             db_pool_max=_positive_int("DB_POOL_MAX", 5),
             seed_targets=os.environ.get("SEED_TARGETS", "").strip(),
         )
+        # Compared against the configured floor, never against the smallest interval in
+        # the database: that would put a query in the startup path and make the check
+        # depend on data that changes whenever someone creates a target.
+        if settings.check_timeout_seconds >= settings.min_interval_seconds:
+            raise ConfigError(
+                f"CHECK_TIMEOUT_SECONDS ({settings.check_timeout_seconds}) must be below "
+                f"MIN_INTERVAL_SECONDS ({settings.min_interval_seconds}), or checks overlap"
+            )
         if settings.db_pool_max < settings.db_pool_min:
             raise ConfigError(
                 f"DB_POOL_MAX ({settings.db_pool_max}) is below "

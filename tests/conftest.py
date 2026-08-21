@@ -98,3 +98,32 @@ def settings_env(monkeypatch):
     get_settings.cache_clear()
     yield override
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def with_pool(clean_database, monkeypatch):
+    """Run one coroutine with the database pool open, in a single event loop.
+
+    An async pool belongs to the loop that opened it, so opening it in one asyncio.run()
+    and using it in another silently breaks. Everything a test does therefore happens
+    inside one call.
+    """
+    import asyncio
+
+    from app import db
+
+    monkeypatch.setenv("DATABASE_URL", clean_database)
+    get_settings.cache_clear()
+
+    def run(scenario):
+        async def wrapped():
+            await db.open_pool(get_settings())
+            try:
+                return await scenario()
+            finally:
+                await db.close_pool()
+
+        return asyncio.run(wrapped())
+
+    yield run
+    get_settings.cache_clear()

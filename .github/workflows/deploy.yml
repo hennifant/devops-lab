@@ -44,7 +44,11 @@ jobs:
       # Staging runs only the application under test. The monitoring stack is exercised by
       # production and would otherwise double the container count on a single host for no
       # additional signal.
-      SERVICES: api db migrate
+      # The worker is application code under test, not infrastructure: ADR 0011 keeps
+      # Prometheus and Grafana out of staging, not the app's own second process.
+      # A longer interval than production so one host does not do double outbound traffic.
+      SERVICES: api db migrate worker
+      CHECK_INTERVAL_SECONDS: "60"
       # Self-referential on purpose: the seeded target points at the staging stack's own
       # /health, so the worker (PR 2) exercises the full path — worker → HTTP → database →
       # metrics — without adding outbound traffic from a host that also runs production.
@@ -78,6 +82,7 @@ jobs:
           MONITORING_CONFIG_HASH=$hash
           API_PORT=$API_PORT
           SEED_TARGETS=$SEED_TARGETS
+          CHECK_INTERVAL_SECONDS=$CHECK_INTERVAL_SECONDS
           POSTGRES_USER=${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}

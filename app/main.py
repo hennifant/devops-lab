@@ -13,7 +13,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field, field_validator
 
@@ -87,6 +87,16 @@ class TargetCreate(BaseModel):
 
 class TargetUpdate(BaseModel):
     enabled: bool
+
+
+class CheckResultOut(BaseModel):
+    id: int
+    target_id: int
+    checked_at: datetime
+    result: str
+    status_code: int | None
+    duration_ms: int | None
+    error: str | None
 
 
 class TargetOut(BaseModel):
@@ -234,21 +244,51 @@ async def delete_target(target_id: int):
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@app.get("/api/targets/{target_id}/results", response_model=list[CheckResultOut])
+async def list_results(target_id: int, limit: int = Query(100, ge=1, le=1000)):
+    """Most recent check results for one target, newest first."""
+    async with db.query("list_results") as conn:
+        cursor = await conn.execute("SELECT 1 FROM targets WHERE id = %s", (target_id,))
+        if await cursor.fetchone() is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such target")
+        cursor = await conn.execute(
+            """
+            SELECT id, target_id, checked_at, result, status_code, duration_ms, error
+              FROM check_results
+             WHERE target_id = %s
+             ORDER BY checked_at DESC
+             LIMIT %s
+            """,
+            (target_id, limit),
+        )
+        return await cursor.fetchall()
+
+
 @app.get("/api/status")
 async def aggregate_status():
-    """Counts of up / down / unknown.
+    """Counts of up / down / unknown, from each target's most recent result.
 
-    Every enabled target is ``unknown`` until PR 2 ships the worker that produces check
-    results. The endpoint exists now so its shape is fixed before anything consumes it.
+    A target with no result yet is ``unknown`` rather than down — the worker may simply
+    not have reached it. Conflating the two would make a fresh deployment look broken.
     """
     async with db.query("aggregate_status") as conn:
         cursor = await conn.execute(
-            "SELECT count(*) FILTER (WHERE enabled) AS enabled, count(*) AS total FROM targets"
+            """
+            SELECT
+                count(*) FILTER (WHERE t.enabled AND last.result = 'success')  AS up,
+                count(*) FILTER (WHERE t.enabled AND last.result IS NOT NULL
+                                   AND last.result <> 'success')               AS down,
+                count(*) FILTER (WHERE t.enabled AND last.result IS NULL)      AS unknown,
+                count(*) FILTER (WHERE NOT t.enabled)                          AS disabled
+              FROM targets t
+              LEFT JOIN LATERAL (
+                  SELECT result
+                    FROM check_results r
+                   WHERE r.target_id = t.id
+                   ORDER BY r.checked_at DESC
+                   LIMIT 1
+              ) last ON true
+            """
         )
         row = await cursor.fetchone()
-    return {
-        "up": 0,
-        "down": 0,
-        "unknown": int(row["enabled"]),
-        "disabled": int(row["total"]) - int(row["enabled"]),
-    }
+    return {k: int(row[k]) for k in ("up", "down", "unknown", "disabled")}

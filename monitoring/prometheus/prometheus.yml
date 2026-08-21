@@ -16,3 +16,11 @@ scrape_configs:
     static_configs:
       - targets:
           - api:8000
+
+  # The worker serves its own metrics on its own port. A separate scrape job means a dead
+  # worker shows up as up{job="devops-lab-worker"} == 0 while the API keeps reporting up.
+  - job_name: "devops-lab-worker"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - worker:9101
