@@ -54,6 +54,7 @@ Runtime stack (Docker Compose, [compose.yaml](compose.yaml)):
 | Path | Purpose |
 | --- | --- |
 | [app/main.py](app/main.py) | FastAPI app: `/`, `/health`, `/ready`, `/metrics`, `/api/targets`, `/api/status` |
+| [app/worker.py](app/worker.py) | the check worker — own container, same image, metrics on `:9101` |
 | [app/config.py](app/config.py) | settings from environment variables; missing credentials fail loudly |
 | [app/db.py](app/db.py) | async pool, hand-written SQL, readiness checks |
 | [app/logging.py](app/logging.py) | structured JSON logging to stdout |
@@ -211,6 +212,11 @@ deleted one, so a config change would silently never take effect.
   replaces the actual control, which is that credentials live in GitHub Secrets and the
   deploy writes `.env` at run time — see
   [ADR 0003](docs/adr/0003-deployment-env-from-repository-secrets.md).
+- **`check_results` has no index on `(target_id, checked_at DESC)` on purpose.** The
+  scheduling query degrades as it grows, which starves the worker rather than slowing an
+  endpoint. PR 3 adds the index with an `EXPLAIN` before and after; until then
+  `SchedulingQuerySlow` is the instrument. Do not "fix" it early —
+  [ADR 0015](docs/adr/0015-worker-and-telemetry.md).
 - **Structural decisions get an ADR** in [docs/adr/](docs/adr/), using
   [the template](docs/adr/0000-template.md). Records are immutable — supersede, never edit.
   The `Background` section is not optional: it is why this repository exists.
@@ -219,6 +225,11 @@ deleted one, so a config change would silently never take effect.
 
 Working end to end: push → test → multi-arch build → GHCR → self-hosted deploy with SHA tag,
 Prometheus scraping the API, Grafana with a provisioned Prometheus datasource.
+
+Done in PR 2: a check worker in its own container, `check_results`, `devops_lab_*` metrics
+on `worker:9101`, and six alert rules that say something — a stalled worker, a target down,
+checks getting slow, and the deliberately unindexed scheduling query starting to cost time.
+See [ADR 0015](docs/adr/0015-worker-and-telemetry.md).
 
 Done in PR 1 of the application work ([docs/app-requirements.md](docs/app-requirements.md)):
 Alembic migrations as their own Compose service, a `targets` table, `/ready` checking the

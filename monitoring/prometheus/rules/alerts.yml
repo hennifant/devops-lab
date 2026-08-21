@@ -9,3 +9,65 @@ groups:
         annotations:
           summary: "DevOps Lab API is down"
           description: "The DevOps Lab API has been unavailable for more than 1 minute."
+
+      # The worker publishes a timestamp at the end of every tick. A stale one is the only
+      # symptom of a worker that is running but no longer working — a crashed process shows
+      # up as up == 0, a wedged one does not.
+      - alert: WorkerStalled
+        expr: time() - devops_lab_worker_last_run_timestamp_seconds > 300
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Check worker has not completed a tick in 5 minutes"
+          description: "The worker process is up but has stopped producing results."
+
+      - alert: WorkerDown
+        expr: up{job="devops-lab-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Check worker is not being scraped"
+          description: "The worker container is gone or its metrics endpoint is unreachable."
+
+      # Ten minutes rather than one: a single failed check is the internet being the
+      # internet. Sustained failure is worth a message.
+      - alert: TargetDown
+        expr: devops_lab_target_up == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Target {{ $labels.target }} has been failing for 10 minutes"
+          description: "Every check of {{ $labels.target }} has failed since it started."
+
+      - alert: ChecksSlow
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(devops_lab_check_duration_seconds_bucket[10m]))
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "99th percentile check duration above 5s"
+          description: "Checks are taking far longer than usual; targets may be degraded."
+
+      # The scheduling query runs on every tick and is deliberately unindexed until PR 3.
+      # This makes that decision observable rather than merely documented: when the
+      # LATERAL lookup starts costing real time, this fires — and the worker stalls
+      # shortly after, which is the point of ordering it this way.
+      - alert: SchedulingQuerySlow
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(devops_lab_db_query_duration_seconds_bucket{query="schedule"}[10m]))
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scheduling query 99th percentile above 1s"
+          description: "check_results has grown enough that the unindexed LATERAL lookup hurts. See ADR 0015."
