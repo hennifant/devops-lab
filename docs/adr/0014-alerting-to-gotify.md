@@ -118,6 +118,29 @@ ended. The likely cause is timing — `group_wait: 10s` plus `group_interval: 30
 resolution processing — rather than configuration, but this is stated as unproven rather
 than assumed. Confirm it against the first real alert that recovers.
 
+### Compose interpolates the whole file, not just the named services
+
+*Learned on the first deploy, 2026-08-21.*
+
+The staging job runs `docker compose up -d api db migrate`. It still failed:
+
+```
+error while interpolating services.gotify.environment.GOTIFY_DEFAULTUSER_PASS:
+required variable GOTIFY_ADMIN_PASSWORD is missing a value
+```
+
+Naming services selects what to *start*. Compose parses and interpolates the entire file
+first, so `${GOTIFY_ADMIN_PASSWORD:?}` in a service that will never run is still resolved —
+and still fails when unset.
+
+The tempting fix is to drop the `:?` guard. That would be wrong: the variable would
+silently become an empty string, which is the exact failure this repository already shipped
+once as `DATABASE_URL=postgresql://:@db:5432/`
+([0003](0003-deployment-env-from-repository-secrets.md)).
+
+Instead staging writes a literal placeholder. It never starts Gotify and has no business
+holding production's password, so the value is `unused-in-staging` rather than the secret.
+
 ### The heartbeat rule is temporary
 
 ```yaml
