@@ -81,6 +81,12 @@ jobs:
           POSTGRES_USER=${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          # Compose interpolates the whole file even when only some services are
+          # named, so the gotify block is resolved here too. A placeholder rather
+          # than the real secret: staging never starts Gotify and has no business
+          # holding production's password.
+          GOTIFY_ADMIN_PASSWORD=unused-in-staging
+          GOTIFY_TOKEN=
           EOF
 
       - name: Deploy
