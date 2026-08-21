@@ -14,3 +14,8 @@ route:
 
 receivers:
   - name: devops-lab
+    # The bridge translates this payload into a Gotify message. send_resolved matters:
+    # without it you are told a thing broke and never told it recovered.
+    webhook_configs:
+      - url: http://gotify-bridge:8080/gotify_webhook
+        send_resolved: true

@@ -25,3 +25,4 @@ Start from [0000-template.md](0000-template.md).
 | [0011](0011-build-once-deploy-many.md) | Build once, deploy many | 2026-08-20 |
 | [0012](0012-hand-written-sql-with-alembic.md) | Hand-written SQL, with Alembic for migrations only | 2026-08-20 |
 | [0013](0013-liveness-and-readiness.md) | Liveness and readiness are separate questions | 2026-08-20 |
+| [0014](0014-alerting-to-gotify.md) | Alerting reaches a phone, through Gotify | 2026-08-21 |
