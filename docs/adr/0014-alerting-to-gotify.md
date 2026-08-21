@@ -88,8 +88,10 @@ check and that the deploy rolls out through `MONITORING_CONFIG_HASH`.
 - One service is now reachable from the LAN. It has authentication; it is still surface.
 - Two secrets to manage: `GOTIFY_ADMIN_PASSWORD` and `GOTIFY_TOKEN`.
 - **The first deploy cannot be complete.** The application token only exists once Gotify
-  runs, so `GOTIFY_TOKEN` is empty on the first pass, the bridge starts and can deliver
-  nothing. Create the application in Gotify, store the token as a secret, deploy again.
+  runs, so `GOTIFY_TOKEN` is empty on the first pass. The bridge does not start at all —
+  it exits with `The token for Gotify API must be set` and, under
+  `restart: unless-stopped`, crash-loops until the token arrives. Louder than running
+  idle, and visible in `docker compose ps`. Create the application in Gotify, store the token as a secret, deploy again.
   The alternative — placing the token on the host by hand — is precisely what
   [0003](0003-deployment-env-from-repository-secrets.md) removed.
 - **This still cannot report a total outage of the M2.** Everything in the chain runs on
@@ -111,6 +113,10 @@ alert POSTed to Alertmanager  →  message in Gotify
 
 The bridge logs `a user-defined template discovery has an error … Falling back to default
 alerting` on startup. That is expected — no custom templates are mounted — and not a fault.
+
+Confirmed again on the real deployment, 2026-08-21: after the second deploy supplied the
+token, the bridge left its restart loop and `Alerting pipeline is wired up` arrived in
+Gotify.
 
 **Not verified:** delivery of the *resolved* notification. `send_resolved: true` is
 configured, but no resolved message arrived within a 45-second window after the alert was
@@ -148,9 +154,9 @@ holding production's password, so the value is `unused-in-staging` rather than t
   expr: vector(1)
 ```
 
-Always true, so it fires permanently and warns about nothing. Its only job is to prove the
-chain reaches the phone once. **Delete it after it arrives** — a permanently firing alert
-is noise, and noise is how people learn to ignore alerts.
+Always true, so it fires permanently and warns about nothing. Its only job was to prove the
+chain delivers once. It did, and it has been removed — a permanently firing alert is noise,
+and noise is how people learn to ignore alerts.
 
 ### What this does not solve: the watchdog
 

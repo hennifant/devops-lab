@@ -9,18 +9,3 @@ groups:
         annotations:
           summary: "DevOps Lab API is down"
           description: "The DevOps Lab API has been unavailable for more than 1 minute."
-
-      # Temporary. Fires permanently and warns about nothing; its only job is to prove the
-      # delivery chain reaches a phone: Prometheus → Alertmanager → bridge → Gotify.
-      # Remove once it has arrived — a permanently firing alert is noise.
-      #
-      # The grown-up version of this is a Watchdog: an alert that always fires plus an
-      # external service that shouts when it stops arriving. That is the only alert that
-      # can report a total outage of this host, and it needs a component outside the M2.
-      - alert: AlertingPipelineHeartbeat
-        expr: vector(1)
-        labels:
-          severity: none
-        annotations:
-          summary: "Alerting pipeline is wired up"
-          description: "Delete this rule once it has reached the phone."
