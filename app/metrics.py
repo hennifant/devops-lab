@@ -1,4 +1,9 @@
-"""Application metrics, shared by the API and (from PR 2) the worker.
+"""Metrics both processes produce.
+
+Worker-only metrics live in app/worker.py, not here. Importing a module registers every
+metric it defines, so anything in this file is published by *both* the API and the worker
+— and an unlabelled Gauge sits at 0 until something sets it. That is not missing data, it
+is a false statement, and alert rules act on it. See ADR 0015.
 
 Names are fixed by docs/app-requirements.md, because Prometheus rules and Grafana
 dashboards are written against them. Changing one silently breaks an alert.
@@ -8,7 +13,7 @@ turns a bounded label into an unbounded one, which is how Prometheus dies. MAX_T
 caps the other side of the same problem.
 """
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Gauge, Histogram
 
 TARGETS_TOTAL = Gauge(
     "devops_lab_targets_total",
@@ -20,46 +25,3 @@ DB_QUERY_DURATION = Histogram(
     "Time spent executing a named database query.",
     ["query"],
 )
-
-
-CHECKS_TOTAL = Counter(
-    "devops_lab_checks_total",
-    "Checks performed, by target and outcome.",
-    ["target", "result"],
-)
-
-CHECK_DURATION = Histogram(
-    "devops_lab_check_duration_seconds",
-    "Time an individual check took, including connect and read.",
-    ["target"],
-)
-
-TARGET_UP = Gauge(
-    "devops_lab_target_up",
-    "Whether the last check of a target succeeded.",
-    ["target"],
-)
-
-WORKER_LAST_RUN = Gauge(
-    "devops_lab_worker_last_run_timestamp_seconds",
-    "Unix time at which the worker last completed a tick.",
-)
-
-WORKER_RUN_DURATION = Histogram(
-    "devops_lab_worker_run_duration_seconds",
-    "Time one worker tick took, from selecting targets to writing results.",
-)
-
-
-def forget_targets(names: set[str]) -> None:
-    """Drop the target_up series for targets that no longer exist or are disabled.
-
-    Without this a deleted target keeps its last value forever, and a rule such as
-    ``target_up == 0 for 10m`` fires against something nobody is checking on purpose.
-    That is how people learn to ignore alerts.
-    """
-    for name in names:
-        try:
-            TARGET_UP.remove(name)
-        except KeyError:
-            pass
