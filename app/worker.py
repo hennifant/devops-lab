@@ -21,14 +21,53 @@ from prometheus_client import start_http_server
 from app import db
 from app.config import get_settings
 from app.logging import configure_logging
-from app.metrics import (
-    CHECK_DURATION,
-    CHECKS_TOTAL,
-    TARGET_UP,
-    WORKER_LAST_RUN,
-    WORKER_RUN_DURATION,
-    forget_targets,
+from prometheus_client import Counter, Gauge, Histogram
+
+# Defined here, not in app/metrics.py. Importing a module registers its metrics, so a
+# shared definition had the API publishing devops_lab_worker_last_run_timestamp_seconds as
+# 0 forever — and WorkerStalled fired against the API's copy while the worker was healthy.
+# It did, on 2026-08-21, and the false alarm reached Gotify. A process should expose only
+# metrics it can actually produce.
+CHECKS_TOTAL = Counter(
+    "devops_lab_checks_total",
+    "Checks performed, by target and outcome.",
+    ["target", "result"],
 )
+
+CHECK_DURATION = Histogram(
+    "devops_lab_check_duration_seconds",
+    "Time an individual check took, including connect and read.",
+    ["target"],
+)
+
+TARGET_UP = Gauge(
+    "devops_lab_target_up",
+    "Whether the last check of a target succeeded.",
+    ["target"],
+)
+
+WORKER_LAST_RUN = Gauge(
+    "devops_lab_worker_last_run_timestamp_seconds",
+    "Unix time at which the worker last completed a tick.",
+)
+
+WORKER_RUN_DURATION = Histogram(
+    "devops_lab_worker_run_duration_seconds",
+    "Time one worker tick took, from selecting targets to writing results.",
+)
+
+
+def forget_targets(names: set[str]) -> None:
+    """Drop the target_up series for targets that are gone or disabled.
+
+    Without this a deleted target keeps its last value forever, and
+    ``target_up == 0 for 10m`` fires against something nobody is checking on purpose.
+    """
+    for name in names:
+        try:
+            TARGET_UP.remove(name)
+        except KeyError:
+            pass
 
 logger = logging.getLogger(__name__)
 

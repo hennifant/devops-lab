@@ -117,6 +117,53 @@ same reasoning that removed the heartbeat in [0014](0014-alerting-to-gotify.md).
 The set of published label values is tracked in the worker rather than read back out of
 `prometheus_client`, whose label registry is private API.
 
+### Worker metrics live in the worker, not in the shared module
+
+*Learned in production, 2026-08-21, from a false alarm that reached Gotify.*
+
+`WorkerStalled` fired while the worker was demonstrably healthy:
+
+```
+job=devops-lab-worker  devops_lab_worker_last_run_timestamp_seconds  age 5s
+job=devops-lab-api     devops_lab_worker_last_run_timestamp_seconds  0
+```
+
+Both processes imported `app/metrics.py`, and **importing a module registers every metric
+it defines**. The API therefore published the worker's gauges too. An unlabelled `Gauge`
+sits at 0 until something sets it, and nothing in the API ever would, so `time() - 0`
+satisfied the rule forever.
+
+The zero was not missing data. It was a false statement, and the alert acted on it.
+
+Two changes, because either alone leaves a trap: worker-only metrics are defined in
+`app/worker.py`, and the rules select `{job="devops-lab-worker"}`. Genuinely shared
+metrics — `devops_lab_db_query_duration_seconds`, `devops_lab_targets_total` — stay in
+`app/metrics.py`.
+
+### A quantile over almost no data is not a quantile
+
+`ChecksSlow` also fired, on a worker that had just restarted and was behaving perfectly.
+With a handful of observations `histogram_quantile` lands in the `+Inf` bucket and returns
+infinity, which is greater than any threshold.
+
+Both percentile rules now carry a sample-rate guard:
+
+```promql
+and sum(rate(devops_lab_check_duration_seconds_count{job="devops-lab-worker"}[10m])) > 0.05
+```
+
+Below that rate the estimate is not trustworthy and the rule stays quiet. Percentile alerts
+without a volume guard are a standard way to generate noise after every restart.
+
+### The pattern behind both
+
+Neither alert was wrong about its own expression. Both were wrong about what the data
+*meant* — a zero that stood for "never set" and an infinity that stood for "not enough
+samples". An alert rule is a claim about reality, and the failure mode is not a missing
+alert but one that cries wolf. The first real alerts this lab delivered end to end were
+two false positives of its own making, which is worth keeping in the record rather than
+tidying away.
+
 ### Cardinality
 
 `devops_lab_checks_total{target, result}` is targets × 3. `MAX_TARGETS` defaults to 50, so

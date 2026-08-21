@@ -14,7 +14,10 @@ groups:
       # symptom of a worker that is running but no longer working — a crashed process shows
       # up as up == 0, a wedged one does not.
       - alert: WorkerStalled
-        expr: time() - devops_lab_worker_last_run_timestamp_seconds > 300
+        # Scoped to the worker job. A metric only means anything from the process that
+        # produces it; without the selector any other job publishing the same name at 0
+        # satisfies this forever.
+        expr: time() - devops_lab_worker_last_run_timestamp_seconds{job="devops-lab-worker"} > 300
         for: 1m
         labels:
           severity: critical
@@ -43,11 +46,17 @@ groups:
           description: "Every check of {{ $labels.target }} has failed since it started."
 
       - alert: ChecksSlow
+        # The rate guard is not decoration. With only a handful of observations
+        # histogram_quantile lands in the +Inf bucket and returns infinity, which is
+        # greater than any threshold — so this fired on a freshly restarted worker that
+        # had done nothing wrong. Require a real sample rate before believing the estimate.
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le) (rate(devops_lab_check_duration_seconds_bucket[10m]))
+            sum by (le) (rate(devops_lab_check_duration_seconds_bucket{job="devops-lab-worker"}[10m]))
           ) > 5
+          and
+          sum(rate(devops_lab_check_duration_seconds_count{job="devops-lab-worker"}[10m])) > 0.05
         for: 10m
         labels:
           severity: warning
@@ -63,8 +72,10 @@ groups:
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le) (rate(devops_lab_db_query_duration_seconds_bucket{query="schedule"}[10m]))
+            sum by (le) (rate(devops_lab_db_query_duration_seconds_bucket{job="devops-lab-worker",query="schedule"}[10m]))
           ) > 1
+          and
+          sum(rate(devops_lab_db_query_duration_seconds_count{job="devops-lab-worker",query="schedule"}[10m])) > 0.05
         for: 5m
         labels:
           severity: warning
