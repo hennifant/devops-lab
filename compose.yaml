@@ -134,7 +134,7 @@ services:
   # the LAN rather than loopback. Without that the phone cannot reach it. Once a tunnel
   # exists this should move back behind 127.0.0.1; see ADR 0014.
   gotify:
-    image: gotify/server:3.0.0
+    image: gotify/server:3.1.1
     restart: ${RESTART_POLICY:-unless-stopped}
     ports:
       - "${GOTIFY_PORT:-8090}:80"
